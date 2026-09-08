@@ -67,8 +67,25 @@ async def run_code_agent_pipeline(cfg):
             logger.exception("[TASK] Code Agent Pipeline 运行失败")
 
 
+async def run_trace_experience(cfg):
+    from memory_service.trace_experience_pipeline import run_pipeline_once
+    interval = get_interval_seconds(cfg)
+    if interval <= 0:
+        raise ValueError('调测经验执行周期必须大于 0')
+    while True:
+        try:
+            await asyncio.to_thread(run_pipeline_once, cfg)
+        except Exception:
+            logger.exception('[TASK] 调测经验提取失败，下个周期重试')
+        await asyncio.sleep(interval)
+
+
 async def main():
     tasks = []
+
+    trace_cfg = TASK_RUNNER_CONFIG.get('TRACE_EXPERIENCE_EXTRACT', {})
+    if trace_cfg.get('enabled', False):
+        tasks.append(run_trace_experience(trace_cfg))
 
     env = os.environ.get("env", "test")
 

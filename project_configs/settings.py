@@ -402,3 +402,28 @@ UPSERT_BATCH = 20  # 攒多少条 summary 写一次
 
 SESSION_MAX_BYTES = 50 * 1024 * 1024  # 单 session 全部 value 超 50MB 不拉
 SESSION_MAX_ROWS = 50000  # 或行数超 5 万不拉
+
+
+
+# 调测轨迹经验提取：先建表和手动试运行，再启用定时任务。
+TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
+    'enabled': False,
+    'interval_days': 1, 'interval_hours': 0, 'interval_minutes': 0,
+    'job_name': 'trace_trial_202608_09',
+    'range_start': '2026-08-01 00:00:00',
+    'range_end': '2026-10-01 00:00:00',
+    'source_url': 'https://coretestresult.cloudspider.rnd.huawei.com/openapi/v1/scriptGenAgentTrajectory',
+    'source_method': 'POST',  # 按 JSON 请求体调用，部署联调时核对
+    'headers_env': 'TRACE_EXPERIENCE_SOURCE_HEADERS',  # JSON，认证信息只放环境变量
+    'verify_tls': True,
+    'page_size': 100, 'request_timeout': 30, 'retry_attempts': 3,
+    'retry_trace_limit': 100, 'max_pages_per_run': 100,
+    'model_name': 'fuyao-DeepSeekV4-PD',
+    'llm_timeout': 300, 'max_output_tokens': 10240,
+    'context_limit': None,  # 手动填写模型网关支持的上下文长度，启用前必填
+    'safety_margin': 2048,
+    'extraction_version': 'v1',
+}
+
+# ES 为 keyword 时用 product.product_id；text+keyword 时改为 product.product_id.keyword。
+EXPERIENCE_PRODUCT_ID_FIELD = os.getenv('EXPERIENCE_PRODUCT_ID_FIELD', 'product.product_id')

@@ -7,7 +7,6 @@ from sqlalchemy.dialects.mysql import LONGBLOB
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, Mapped, mapped_column
 from sqlalchemy.inspection import inspect
 from sqlalchemy.sql import func
-from db.sql_connector import get_sql_connector
 
 
 # ORM 基类
@@ -327,8 +326,40 @@ class CodeAgentSessionSummary(Base):
     )
 
 
+
+class TraceExperienceJobState(Base):
+    """每个运行范围的增量读取位置。"""
+    __tablename__ = 'trace_experience_job_state'
+    job_name = Column(String(64), primary_key=True)
+    range_start = Column(DateTime, nullable=False)
+    range_end = Column(DateTime)
+    last_update_time = Column(DateTime, nullable=False)
+    last_id = Column(BigInteger, nullable=False, default=0)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class TraceExperienceRecord(Base):
+    """一组 case_id + 原始用户的处理进度及待写入结果。"""
+    __tablename__ = 'trace_experience_record'
+    record_key = Column(String(64), primary_key=True)
+    job_name = Column(String(64), nullable=False)
+    trace_key = Column(String(64), nullable=False)
+    case_id = Column(Text, nullable=False)
+    source_test_user_json = Column(Text, nullable=False)
+    processed_trace_hash = Column(String(64))
+    source_update_time = Column(DateTime)
+    experience_refs = Column(Text, nullable=False, default='[]')
+    process_status = Column(String(16), nullable=False, default='pending')
+    retry_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (Index('idx_trace_job_status_updated', 'job_name', 'process_status', 'updated_at'),)
+
+
 def init_sql():
     """创建所有表"""
+    from db.sql_connector import get_sql_connector
     Base.metadata.create_all(bind=get_sql_connector().engine)
 
 

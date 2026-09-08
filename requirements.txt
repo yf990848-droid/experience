@@ -18,3 +18,4 @@ psycopg[binary]>=3.1
 numpy~=1.26.4
 python-multipart
 httpx
+requests>=2.31,<3
