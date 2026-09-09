@@ -421,8 +421,9 @@ def run_pipeline_once(config=None, init_tables=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument('--init-tables', action='store_true', help='创建本任务的两张状态表')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--init-tables', action='store_true',
+                      help='创建本任务的两张状态表（不传参数时默认执行）')
     mode.add_argument('--once', action='store_true', help='手动运行一轮，无需启用定时开关')
     parser.add_argument('--max-pages', type=int, default=None, help='限制本轮增量页数')
     args = parser.parse_args()
@@ -433,4 +434,4 @@ if __name__ == '__main__':
             parser.error('--max-pages 必须大于 0')
         cfg['max_pages_per_run'] = args.max_pages
     logging.basicConfig(level=logging.INFO)
-    run_pipeline_once(cfg, init_tables=args.init_tables)
+    run_pipeline_once(cfg, init_tables=args.init_tables or not args.once)
