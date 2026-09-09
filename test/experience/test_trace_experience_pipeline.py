@@ -10,7 +10,8 @@ from sqlalchemy.exc import OperationalError
 
 from db_operate.trace_experience_store import TraceStateStore
 from memory_service.trace_experience_pipeline import (
-    Pipeline, StepClient, Extractor, build_body, doc_id, identity, normalize, utc_time,
+    Pipeline, StepClient, Extractor, build_body, doc_id, identity, normalize,
+    parse_model_array, utc_time,
 )
 
 
@@ -325,3 +326,14 @@ def test_source_reverting_after_partial_write_is_reprocessed(setup):
     pipeline.process(key)
     assert store.get(key).process_status == 'done'
     assert len({d['metadata']['source_revision'] for d in writer.docs.values()}) == 1
+
+
+
+def test_model_analysis_text_before_json_is_accepted():
+    output = parse_model_array('我们先分析轨迹。\n' + json.dumps([item()]))
+    assert output == [item()]
+
+
+def test_model_array_with_trailing_text_is_rejected():
+    with pytest.raises(ValueError, match='invalid_model_array'):
+        parse_model_array(json.dumps([item()]) + '\n额外说明')

@@ -74,6 +74,21 @@ def result(step):
     return str(step.get('fixResult') or '').strip().lower()
 
 
+def parse_model_array(text):
+    """允许模型在最终 JSON 数组前输出说明文字。"""
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != '[':
+            continue
+        try:
+            value, end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list) and not text[index + end:].strip():
+            return value
+    raise ValueError('invalid_model_array')
+
+
 def eligible(step, start, end):
     changed = step.get('diffContent') or {}
     when = utc_time(step['updateTime'])
@@ -181,9 +196,7 @@ class Extractor:
         if not self.fits(steps, ids):
             raise ValueError('single_repair_exceeds_context')
         text = self.call(self.prompt(steps, ids))
-        output = json.loads(text)
-        if not isinstance(output, list):
-            raise ValueError('invalid_model_array')
+        output = parse_model_array(text)
         known, seen = {str(s['id']) for s in steps}, set()
         for item in output:
             if not isinstance(item, dict):
