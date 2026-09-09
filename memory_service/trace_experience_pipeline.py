@@ -195,7 +195,18 @@ class Extractor:
     def extract(self, steps, ids):
         if not self.fits(steps, ids):
             raise ValueError('single_repair_exceeds_context')
-        text = self.call(self.prompt(steps, ids))
+        text = ''
+        attempts = max(1, self.cfg.get('llm_retry_attempts', 3))
+        for attempt in range(1, attempts + 1):
+            try:
+                text = self.call(self.prompt(steps, ids))
+            except Exception:
+                text = ''
+            if isinstance(text, str) and text.strip():
+                break
+            LOG.warning('model request failed attempt=%s/%s', attempt, attempts)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('model_request_failed')
         output = parse_model_array(text)
         known, seen = {str(s['id']) for s in steps}, set()
         for item in output:

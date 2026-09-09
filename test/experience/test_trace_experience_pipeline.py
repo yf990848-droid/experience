@@ -337,3 +337,19 @@ def test_model_analysis_text_before_json_is_accepted():
 def test_model_array_with_trailing_text_is_rejected():
     with pytest.raises(ValueError, match='invalid_model_array'):
         parse_model_array(json.dumps([item()]) + '\n额外说明')
+
+
+
+def test_empty_model_response_is_retried():
+    responses = iter(['', '', json.dumps([item()])])
+    call = Mock(side_effect=lambda prompt: next(responses))
+    output = Extractor(config(), call, len).extract([step()], ['1'])
+    assert output == [item()]
+    assert call.call_count == 3
+
+
+def test_model_request_fails_after_retry_limit():
+    call = Mock(return_value='')
+    with pytest.raises(ValueError, match='model_request_failed'):
+        Extractor(config(), call, len).extract([step()], ['1'])
+    assert call.call_count == 3

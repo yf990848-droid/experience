@@ -419,7 +419,7 @@ TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
     'page_size': 100, 'request_timeout': 30, 'retry_attempts': 3,
     'retry_trace_limit': 100, 'max_pages_per_run': 100,
     'model_name': 'fuyao-DeepSeekV4-PD',
-    'llm_timeout': 300, 'max_output_tokens': 10240,
+    'llm_timeout': 300, 'llm_retry_attempts': 3, 'max_output_tokens': 10240,
     'context_limit': 200000,  # 手动填写模型网关支持的上下文长度，启用前必填
     'safety_margin': 2048,
     'extraction_version': 'v1',

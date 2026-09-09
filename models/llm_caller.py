@@ -62,10 +62,21 @@ class LLMCaller:
             "scene": self.scene
         }
 
+        response = None
         try:
             response = requests.post(LLMConfig.MODEL_GATE_URL, headers=self.header, json=requests_, timeout=timeout)
-            response = json.loads(response.text)["Message"]
+            response.raise_for_status()
+            payload = response.json()
+            message = payload.get("Message")
+            if payload.get("Status") != "Success" or not isinstance(message, str) or not message.strip():
+                raise ValueError("模型响应中没有有效 Message")
+            return message
         except Exception as e:
-            logger.error(f"请求大模型出错，错误信息：{e}")
+            status = getattr(response, "status_code", None)
+            content_type = response.headers.get("Content-Type") if response is not None else None
+            response_length = len(response.content) if response is not None else 0
+            logger.error(
+                "请求大模型出错: type=%s status=%s content_type=%s response_length=%s",
+                type(e).__name__, status, content_type, response_length
+            )
             return ""
-        return response
