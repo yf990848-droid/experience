@@ -422,6 +422,7 @@ TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
     'llm_timeout': 300, 'llm_retry_attempts': 3, 'max_output_tokens': 10240,
     'context_limit': 200000,  # 手动填写模型网关支持的上下文长度，启用前必填
     'safety_margin': 2048,
+    'history_steps_before_fix': 3,
     'extraction_version': 'v1',
 }
 
