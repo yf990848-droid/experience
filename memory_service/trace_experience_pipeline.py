@@ -301,6 +301,9 @@ class Pipeline:
                             created=0, updated=0, deleted=0, skipped=0)
         self.start = utc_time(config['range_start'])
         self.end = utc_time(config['range_end']) if config.get('range_end') else None
+        self.history_steps_before_fix = config.get('history_steps_before_fix', 3)
+        if type(self.history_steps_before_fix) is not int or self.history_steps_before_fix < 0:
+            raise ValueError('invalid_history_steps_before_fix')
         if self.end is not None and self.end <= self.start:
             raise ValueError('invalid_time_range')
 
@@ -336,7 +339,8 @@ class Pipeline:
             steps = self.client.history(row.case_id, json.loads(row.source_test_user_json))
             revision = digest([steps, self.cfg['extraction_version'], self.cfg['model_name'],
                                self.cfg['range_start'], self.cfg.get('range_end'),
-                               self.cfg['context_limit'], self.cfg['max_output_tokens']])
+                               self.cfg['context_limit'], self.cfg['max_output_tokens'],
+                               self.history_steps_before_fix])
             by_id = {str(s['id']): s for s in steps}
             groups = defaultdict(list)
             for step in steps:
@@ -359,7 +363,16 @@ class Pipeline:
                             self.summary['skipped'] += 1
                     else:
                         selected.append(step)
-                for batch, ids in self.extractor.batches(group_steps, selected):
+                selected_ids = {step['id'] for step in selected}
+                model_step_ids = set()
+                for index, step in enumerate(group_steps):
+                    if step['id'] not in selected_ids:
+                        continue
+                    start = max(0, index - self.history_steps_before_fix)
+                    model_step_ids.update(
+                        context_step['id'] for context_step in group_steps[start:index + 1])
+                model_steps = [step for step in group_steps if step['id'] in model_step_ids]
+                for batch, ids in self.extractor.batches(model_steps, selected):
                     items = self.extractor.extract(batch, ids)
                     for item in items:
                         step = by_id[item['fix_step_id']]
