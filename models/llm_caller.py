@@ -65,9 +65,27 @@ class LLMCaller:
         response = None
         try:
             response = requests.post(LLMConfig.MODEL_GATE_URL, headers=self.header, json=requests_, timeout=timeout)
+            print("\n========== 模型网关原始响应 ==========")
+            print("HTTP 状态码:", response.status_code)
+            print("Content-Type:", response.headers.get("Content-Type"))
+            print("响应长度:", len(response.content))
+            print("原始响应 repr:", repr(response.text))
+            print("原始响应正文:")
+            print(response.text)
+            print("========== 原始响应结束 ==========\n")
+
             response.raise_for_status()
             payload = response.json()
             message = payload.get("Message")
+
+            print("\n========== 模型 Message ==========")
+            print("Status:", payload.get("Status"))
+            print("Message 类型:", type(message).__name__)
+            print("Message 长度:", len(message) if isinstance(message, str) else None)
+            print("Message repr:", repr(message))
+            print("Message 正文:")
+            print(message)
+            print("========== Message 结束 ==========\n")
             if payload.get("Status") != "Success" or not isinstance(message, str) or not message.strip():
                 raise ValueError("模型响应中没有有效 Message")
             return message
