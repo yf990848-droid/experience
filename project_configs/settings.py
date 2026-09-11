@@ -415,12 +415,12 @@ TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
     'source_url': 'https://coretestresult.cloudspider.rnd.huawei.com/openapi/v1/scriptGenAgentTrajectory',
     'source_method': 'POST',  # 按 JSON 请求体调用，部署联调时核对
     'headers_env': 'TRACE_EXPERIENCE_SOURCE_HEADERS',  # JSON，认证信息只放环境变量
-    'verify_tls': True,
+    'verify_tls': False,
     'page_size': 100, 'request_timeout': 30, 'retry_attempts': 3,
     'retry_trace_limit': 100, 'max_pages_per_run': 100,
     'model_name': 'fuyao-DeepSeekV4-PD',
     'llm_timeout': 300, 'llm_retry_attempts': 3, 'max_output_tokens': 10240,
-    'context_limit': 200000,  # 手动填写模型网关支持的上下文长度，启用前必填
+    'context_limit': 50000,  # 手动填写模型网关支持的上下文长度，启用前必填
     'safety_margin': 2048,
     'history_steps_before_fix': 3,
     'extraction_version': 'v1',
