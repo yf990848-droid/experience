@@ -286,7 +286,8 @@ def build_body(step, item, revision, existing):
     if step.get('product') is not None:
         metadata['product'] = step['product']
     body = {'doc_id': doc_id(step), 'scene_id': '421', 'scene': '测试脚本调测经验',
-            'user_id': owner, 'product': {'product_id': str(step['groupId'])},
+            'user_id': owner, 'product': {'product_id': str(step['groupId']),
+                                          'product_name': step.get('groupName')},
             'title': item['title'], 'summary': item['summary'], 'experience': content,
             'rag_search_text': item['rag_search_text'], 'metadata': metadata}
     metadata['payload_hash'] = digest(body)
