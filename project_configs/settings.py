@@ -409,9 +409,9 @@ SESSION_MAX_ROWS = 50000  # 或行数超 5 万不拉
 TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
     'enabled': False,
     'interval_days': 1, 'interval_hours': 0, 'interval_minutes': 0,
-    'job_name': 'trace_trial_2026091102',
-    'range_start': '2026-08-15 00:00:00',
-    'range_end': '2026-08-30 00:00:00',
+    'job_name': 'trace_trial_2026091401',
+    'range_start': '2026-09-01 00:00:00',
+    'range_end': '2026-09-30 00:00:00',
     'source_url': 'https://coretestresult.cloudspider.rnd.huawei.com/openapi/v1/scriptGenAgentTrajectory',
     'source_method': 'POST',  # 按 JSON 请求体调用，部署联调时核对
     'headers_env': 'TRACE_EXPERIENCE_SOURCE_HEADERS',  # JSON，认证信息只放环境变量
