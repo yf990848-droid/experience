@@ -222,7 +222,7 @@ class Extractor:
     def extract(self, steps, ids):
         if not self.fits(steps, ids):
             raise ValueError('single_repair_exceeds_context')
-        output, saw_response = None, False
+        saw_response, last_error = False, 'invalid_model_array'
         attempts = max(1, self.cfg.get('llm_retry_attempts', 3))
         for attempt in range(1, attempts + 1):
             try:
@@ -235,18 +235,13 @@ class Extractor:
             saw_response = True
             try:
                 output = parse_model_array(text)
-                break
+                return self.validate_output(output, steps, ids)
             except ValueError as exc:
                 self.save_model_failure(ids, attempt, str(exc), text)
-                LOG.warning('invalid model array attempt=%s/%s length=%s',
-                            attempt, attempts, len(text))
-        if output is None:
-            raise ValueError('invalid_model_array' if saw_response else 'model_request_failed')
-        try:
-            return self.validate_output(output, steps, ids)
-        except ValueError as exc:
-            self.save_model_failure(ids, attempt, str(exc), text)
-            raise
+                LOG.warning('model output validation failed error=%s attempt=%s/%s length=%s',
+                            str(exc), attempt, attempts, len(text))
+                last_error = str(exc)
+        raise ValueError(last_error if saw_response else 'model_request_failed')
 
     def validate_output(self, output, steps, ids):
         known, seen = {str(s['id']) for s in steps}, set()
