@@ -423,6 +423,8 @@ TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
     'context_limit': 50000,  # 手动填写模型网关支持的上下文长度，启用前必填
     'safety_margin': 2048,
     'history_steps_before_fix': 3,
+    'model_failure_file': 'logs/trace_experience_model_failures.jsonl',
+    'model_input_exclude_fields': ['errorCause'],
     'extraction_version': 'v1',
 }
 
