@@ -18,7 +18,7 @@ SOURCE = 'trace_experience'
 VALID = {'success', 'pass'}
 INVALID = {'fail'}
 TEXT_FIELDS = ('title', 'failure_phenomenon', 'summary', 'debug_trace', 'error_log',
-               'diff', 'root_cause', 'pattern', 'rag_search_text')
+               'root_cause', 'pattern', 'rag_search_text')
 
 
 def utc_time(value):
@@ -308,12 +308,27 @@ def build_body(step, item, revision, existing):
     owner = user_id(step['testUser'])
     if existing and user_id(existing.get('user_id')) != '0':
         owner = existing['user_id']
-    trace = item['debug_trace'] + '\n\n来源：' + json_text({
-        'case_id': step['caseId'], 'test_user': step['testUser'],
-        'fix_step_id': str(step['id']), 'related_step_ids': item['related_step_ids'],
-        'fix_result': step['fixResult'], 'update_time': step['updateTime']})
-    content = '\n\n'.join('## ' + title + '\n' + value for title, value in (
-        ('Debug Trace', trace), ('Error Log', item['error_log']), ('Diff', item['diff']),
+    trace = item['debug_trace'] + '\n\n' + '\n'.join((
+        '来源用例：' + step['caseId'],
+        '调测用户：' + str(step['testUser']),
+        '修复 Step：' + str(step['id']),
+        '关联 Step：' + ', '.join(item['related_step_ids']),
+        '修复标记：' + str(step['fixResult']),
+        '更新时间：' + step['updateTime']))
+    # 代码块围栏长于内容中的反引号，避免原始日志或代码提前结束代码块。
+    def fenced(value, language):
+        longest, run = 0, 0
+        for char in value:
+            run = run + 1 if char == '`' else 0
+            longest = max(longest, run)
+        fence = '`' * max(3, longest + 1)
+        return fence + language + '\n' + value + '\n' + fence
+
+    changed_lines = (step.get('diffContent') or {}).get('changedLines') or []
+    diff = fenced('\n'.join(changed_lines), 'diff')
+    error_log = fenced(item['error_log'], 'text')
+    content = '\n\n'.join('## ' + title + '\n\n' + value for title, value in (
+        ('Debug Trace', trace), ('Error Log', error_log), ('Diff', diff),
         ('Root Cause', item['root_cause']), ('Pattern', item['pattern'])))
     metadata = {'source': SOURCE, 'group_id': str(step['groupId']),
                 'fix_step_id': str(step['id']), 'source_revision': revision,
