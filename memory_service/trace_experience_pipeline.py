@@ -84,7 +84,8 @@ def parse_model_array(text):
             value, end = decoder.raw_decode(text[index:])
         except json.JSONDecodeError:
             continue
-        if isinstance(value, list) and not text[index + end:].strip():
+        tail = text[index + end:].strip()
+        if isinstance(value, list) and tail in ('', '```'):
             return value
     raise ValueError('invalid_model_array')
 
@@ -169,7 +170,33 @@ class Extractor:
         self.cfg, self.call, self.count_tokens = config, call, count_tokens
 
     def prompt(self, steps, ids):
-        return TRACE_EXPERIENCE_PROMPT + json_text({'eligible_fix_ids': ids, 'steps': steps})
+        excluded = set(self.cfg.get('model_input_exclude_fields', []))
+        model_steps = [
+            {key: value for key, value in step.items() if key not in excluded}
+            for step in steps
+        ]
+        return TRACE_EXPERIENCE_PROMPT + json_text({'eligible_fix_ids': ids, 'steps': model_steps})
+
+    def save_model_failure(self, ids, attempt, error, text):
+        path = self.cfg.get('model_failure_file')
+        if not path:
+            return
+        try:
+            path = os.path.abspath(path)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            record = {
+                'time': datetime.utcnow().isoformat() + 'Z',
+                'job_name': self.cfg.get('job_name'),
+                'eligible_fix_ids': ids,
+                'attempt': attempt,
+                'error': error,
+                'response': text,
+            }
+            with open(path, 'a', encoding='utf-8') as stream:
+                stream.write(json_text(record) + '\n')
+            LOG.warning('model response failed error=%s file=%s', error, path)
+        except Exception as exc:
+            LOG.warning('model failure file write failed type=%s', type(exc).__name__)
 
     def fits(self, steps, ids):
         return (self.count_tokens(self.prompt(steps, ids)) + self.cfg['max_output_tokens']
@@ -209,12 +236,19 @@ class Extractor:
             try:
                 output = parse_model_array(text)
                 break
-            except ValueError:
-                LOG.warning(
-                    'invalid model array attempt=%s/%s length=%s tail=%r',
-                    attempt, attempts, len(text), text[-1000:])
+            except ValueError as exc:
+                self.save_model_failure(ids, attempt, str(exc), text)
+                LOG.warning('invalid model array attempt=%s/%s length=%s',
+                            attempt, attempts, len(text))
         if output is None:
             raise ValueError('invalid_model_array' if saw_response else 'model_request_failed')
+        try:
+            return self.validate_output(output, steps, ids)
+        except ValueError as exc:
+            self.save_model_failure(ids, attempt, str(exc), text)
+            raise
+
+    def validate_output(self, output, steps, ids):
         known, seen = {str(s['id']) for s in steps}, set()
         for item in output:
             if not isinstance(item, dict):
@@ -348,7 +382,8 @@ class Pipeline:
             revision = digest([steps, self.cfg['extraction_version'], self.cfg['model_name'],
                                self.cfg['range_start'], self.cfg.get('range_end'),
                                self.cfg['context_limit'], self.cfg['max_output_tokens'],
-                               self.history_steps_before_fix])
+                               self.history_steps_before_fix,
+                               sorted(set(self.cfg.get('model_input_exclude_fields', [])))])
             by_id = {str(s['id']): s for s in steps}
             groups = defaultdict(list)
             for step in steps:
