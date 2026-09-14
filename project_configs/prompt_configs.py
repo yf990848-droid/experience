@@ -369,10 +369,13 @@ TRACE_EXPERIENCE_PROMPT = '''你负责从测试脚本调测轨迹提取可复用
    只基于可见数据判断，不下载日志，不编造文件名、根因或验证结果。
 4. 有效结果的 title、failure_phenomenon 使用“主语 + 核心失败表现”，不含修复动作。
    summary 简述失败现象、实际修复动作及可见效果。
-   debug_trace 描述失败、修改、验证；缺少验证详情时明确说明，不编造通过结果。
-   error_log 保留核心错误原文；diff 按文件整理直接相关的实际变更，
-   忽略 No Differences Found 和无关修改，无路径时说明未提供。
-   root_cause 区分事实与推断；pattern 使用“[触发场景] → [修复动作]”。
+   debug_trace 使用三行短句，分别以“修复前：”“本次修改：”“验证结果：”开头。
+   缺少验证详情时明确说明，不编造通过结果。
+   error_log 只保留关键错误原文，按行排列，不重复整段脚本或生成无意义的 Traceback...。
+   区分最终异常与命令输出，例如找不到 Retcode 变量不能直接归因为批任务状态异常。
+   Diff 由程序直接展示原始 changedLines，模型不输出 diff 字段。
+   root_cause 使用两行短句，分别以“事实：”“推断：”开头，证据不足时明确说明。
+   pattern 使用“[触发场景] → [修复动作]”。
 5. related_step_ids 只引用本批提供的 Step，包含 fix_step_id；不同产品证据不能混用。
 6. 两种结果都必须提供非空 reason，解释关联成立或不成立的依据。
    valid=true 必须提供下面示例的全部字段，所有正文为非空字符串，尤其不能遗漏 summary。
@@ -380,7 +383,7 @@ TRACE_EXPERIENCE_PROMPT = '''你负责从测试脚本调测轨迹提取可复用
 7. 仅输出 JSON 数组，不输出推理过程、代码围栏或其他文字。
 以下示例仅演示输出结构，不是任务数据，不得照抄示例 ID 或事实。
 有效结果示例：
-[{"fix_step_id":"1002","valid":true,"reason":"失败日志显示配置重复，实际修改增加配置存在性检查，与该失败直接关联。","failure_phenomenon":"APN 添加因配置已存在失败","title":"APN 添加因配置已存在失败","summary":"添加 APN 时因配置已存在失败；修改增加存在性检查，修复标记为 success，未提供进一步验证详情。","debug_trace":"修复前：APN 已存在导致添加失败；修改：增加存在性检查；验证：fixResult=success，未提供进一步验证详情。","error_log":"APN already exists","diff":"未提供文件路径；添加前增加 APN 存在性检查。","root_cause":"事实：日志提示 APN 已存在。推断：重复创建导致失败。","pattern":"[重复添加 APN] → [添加前检查配置是否存在]","rag_search_text":"APN 添加失败 配置已存在 存在性检查","related_step_ids":["1001","1002"]}]
+[{"fix_step_id":"1002","valid":true,"reason":"失败日志显示配置重复，实际修改增加配置存在性检查，与该失败直接关联。","failure_phenomenon":"APN 添加因配置已存在失败","title":"APN 添加因配置已存在失败","summary":"添加 APN 时因配置已存在失败；修改增加存在性检查，修复标记为 success，未提供进一步验证详情。","debug_trace":"修复前：APN 已存在导致添加失败。\\n本次修改：增加存在性检查。\\n验证结果：fixResult=success，未提供进一步验证详情。","error_log":"APN already exists","root_cause":"事实：日志提示 APN 已存在。\\n推断：重复创建导致失败。","pattern":"[重复添加 APN] → [添加前检查配置是否存在]","rag_search_text":"APN 添加失败 配置已存在 存在性检查","related_step_ids":["1001","1002"]}]
 无效结果示例：
 [{"fix_step_id":"1003","valid":false,"reason_code":"insufficient_evidence","reason":"仅提供删除行，无法确认实际修改与失败现象的直接关联。","related_step_ids":["1003"]}]
 以下 JSON 是任务数据：
