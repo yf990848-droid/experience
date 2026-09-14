@@ -425,7 +425,7 @@ TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
     'history_steps_before_fix': 3,
     'model_failure_file': 'logs/trace_experience_model_failures.jsonl',
     'model_input_exclude_fields': ['errorCause'],
-    'extraction_version': 'v2',
+    'extraction_version': 'v3',
 }
 
 # ES 为 keyword 时用 product.product_id；text+keyword 时改为 product.product_id.keyword。
