@@ -463,7 +463,9 @@ class Pipeline:
                 self.process(key)
             remaining -= len(keys)
         cursor = (job.last_update_time, job.last_id)
-        for _ in range(self.cfg.get('max_pages_per_run', 100)):
+        self.summary['has_more'] = False
+        max_pages = self.cfg.get('max_pages_per_run', 100)
+        for page_index in range(max_pages):
             page = self.client.incremental(*cursor)
             rows, previous, stop = [], cursor, False
             for raw in page['list']:
@@ -484,6 +486,8 @@ class Pipeline:
                     self.process(key)
             if stop or not page['hasNextPage']:
                 break
+            if page_index + 1 == max_pages:
+                self.summary['has_more'] = True
             if not rows:
                 raise ValueError('empty_incremental_middle_page')
         LOG.info('trace experience summary=%s', self.summary)
