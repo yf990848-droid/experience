@@ -205,7 +205,7 @@ TASK_RUNNER_CONFIG = {
     },
     'CODE_AGENT_PIPELINE': {
         'enabled': True,
-        'run_at_hour': 21,  # 凌晨 1 点
+        'run_at_hour': 20,
         'run_at_minute': 0,
     },
 }
@@ -403,7 +403,10 @@ UPSERT_BATCH = 20  # 攒多少条 summary 写一次
 SESSION_MAX_BYTES = 50 * 1024 * 1024  # 单 session 全部 value 超 50MB 不拉
 SESSION_MAX_ROWS = 50000  # 或行数超 5 万不拉
 
-
+# data_source 字段的取值
+SOURCE_GUI = "gui"
+SOURCE_CLI = "cli"
+SOURCES = (SOURCE_GUI, SOURCE_CLI)
 
 # 调测轨迹经验提取：先建表和手动试运行，再启用定时任务。
 TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT'] = {
