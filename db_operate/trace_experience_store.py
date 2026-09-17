@@ -75,7 +75,8 @@ class TraceStateStore:
     def save(self, key, refs, status=None, revision=None, error=None):
         with self.sessions.begin() as session:
             row = session.get(Record, key)
-            row.experience_refs = json_text(refs)
+            if refs is not None:
+                row.experience_refs = json_text(refs)
             row.updated_at = datetime.utcnow()
             if status:
                 row.process_status = status
