@@ -176,6 +176,32 @@ class Extractor:
     def __init__(self, config, call, count_tokens):
         self.cfg, self.call, self.count_tokens = config, call, count_tokens
 
+    @staticmethod
+    def validate_output(output, steps, ids):
+        known, seen = {str(s['id']) for s in steps}, set()
+        for item in output:
+            if not isinstance(item, dict):
+                raise ValueError('invalid_model_item')
+            fix_id = item.get('fix_step_id')
+            if fix_id not in ids or fix_id in seen or not isinstance(item.get('valid'), bool):
+                raise ValueError('invalid_model_fix_id')
+            seen.add(fix_id)
+            refs = item.get('related_step_ids')
+            if (not isinstance(refs, list) or any(not isinstance(x, str) or x not in known for x in refs)
+                    or fix_id not in refs):
+                raise ValueError('invalid_model_references')
+            if not isinstance(item.get('reason'), str) or not item['reason'].strip():
+                raise ValueError('missing_model_reason')
+            if item['valid']:
+                if any(not isinstance(item.get(f), str) or not item[f].strip() for f in TEXT_FIELDS):
+                    raise ValueError('incomplete_model_experience')
+            elif item.get('reason_code') not in ('unrelated', 'insufficient_evidence'):
+                raise ValueError('invalid_model_reason_code')
+        if seen != set(ids):
+            raise ValueError('incomplete_model_result')
+        return output
+
+
     def prompt(self, steps, ids):
         excluded = set(self.cfg.get('model_input_exclude_fields', []))
         model_steps = [
@@ -250,30 +276,6 @@ class Extractor:
                 last_error = str(exc)
         raise ValueError(last_error if saw_response else 'model_request_failed')
 
-    @staticmethod
-    def validate_output(output, steps, ids):
-        known, seen = {str(s['id']) for s in steps}, set()
-        for item in output:
-            if not isinstance(item, dict):
-                raise ValueError('invalid_model_item')
-            fix_id = item.get('fix_step_id')
-            if fix_id not in ids or fix_id in seen or not isinstance(item.get('valid'), bool):
-                raise ValueError('invalid_model_fix_id')
-            seen.add(fix_id)
-            refs = item.get('related_step_ids')
-            if (not isinstance(refs, list) or any(not isinstance(x, str) or x not in known for x in refs)
-                    or fix_id not in refs):
-                raise ValueError('invalid_model_references')
-            if not isinstance(item.get('reason'), str) or not item['reason'].strip():
-                raise ValueError('missing_model_reason')
-            if item['valid']:
-                if any(not isinstance(item.get(f), str) or not item[f].strip() for f in TEXT_FIELDS):
-                    raise ValueError('incomplete_model_experience')
-            elif item.get('reason_code') not in ('unrelated', 'insufficient_evidence'):
-                raise ValueError('invalid_model_reason_code')
-        if seen != set(ids):
-            raise ValueError('incomplete_model_result')
-        return output
 
 
 class ExperienceWriter:
