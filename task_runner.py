@@ -68,13 +68,13 @@ async def run_code_agent_pipeline(cfg):
 
 
 async def run_trace_experience(cfg):
-    from memory_service.trace_experience_pipeline import run_pipeline_once
+    from memory_service.trace_experience_pipeline import run_pipeline_once as run_trace_pipeline_once
     interval = get_interval_seconds(cfg)
     if interval <= 0:
         raise ValueError('调测经验执行周期必须大于 0')
     while True:
         try:
-            result = await asyncio.to_thread(run_pipeline_once, cfg)
+            result = await asyncio.to_thread(run_trace_pipeline_once, cfg)
         except Exception:
             logger.exception('[TASK] 调测经验提取失败，下个周期重试')
             await asyncio.sleep(interval)
