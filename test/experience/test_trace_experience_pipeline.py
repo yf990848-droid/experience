@@ -316,7 +316,7 @@ def test_one_bad_batch_preserves_completed_repairs(setup):
     def fail_second(prompt):
         nonlocal count
         count += 1
-        return '[]' if count == 2 else respond(prompt)
+        return '[]' if 2 <= count < 2 + cfg.get('llm_retry_attempts', 3) else respond(prompt)
     call.side_effect = fail_second
     pipeline.process(key)
     assert len(writer.docs) == 1 and store.get(key).process_status == 'failed'
