@@ -1,124 +1,178 @@
-脚本调测经验知识库任务进展
+# 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-07-27
+更新时间：2026-09-17  
+维护分支：`develop`；发布分支：`main`
 
-1. 任务目标
+## 1. 背景与目标
 
-从已完成预处理的脚本调测轨迹数据中，异步提取可复用的脚本修复经验，按产品写入经验知识库；后续由 experience-engine skill 检索相关经验，为脚本调测 Agent 提供修复建议和相似案例。
+在 memory 服务中定时读取 CloudSpider 的脚本调测 Step 数据，将相同 `caseId + testUser` 的全部历史 Step 整理成完整轨迹，从有效修复中提取经验并写入云见经验中心。
 
-整体链路：
+整体流程：
 
-调测轨迹数据
-→ 筛选有效修复记录
-→ 大模型总结经验
-→ 按产品写入经验库
-→ experience-engine skill 检索
-→ 辅助脚本调测 Agent
+```text
+读取更新数据
+→ 查询完整轨迹
+→ 找出有效修复点
+→ 大模型提取经验
+→ 新建、覆盖或删除经验
+→ 保存任务进度和轨迹处理结果
+```
 
-2. 当前进展
+经验正文保存在 Elasticsearch，SQL 只保存增量读取位置、轨迹处理状态和经验引用。
 
-调测轨迹自动采集已完成全链路联调并上线，原始作业数据正在持续积累。
+## 2. 已确认的业务规则
 
-轨迹数据的预处理与串联已由上游完成，本任务只需负责经验筛选、总结和入库。
+### 2.1 轨迹和经验粒度
 
-已明确经验库现有请求结构，核心内容包括：
+- 使用 `caseId + 原始 testUser` 查询和标识一条完整轨迹。
+- 同一轨迹中出现不同 `groupId` 时，按产品分开处理。
+- 一条轨迹可能包含多个有效修复点，每个有效修复点提取一个直接关联的主失败现象，并生成一条经验。
+- 不同轨迹即使失败现象相似，也分别保存，不进行跨轨迹合并。
+- 失败现象格式为“主语 + 核心失败表现”，由大模型根据接口可见的日志和上下文总结，不包含根因和修复动作。
 
-debug_trace：调试过程总结；
+### 2.2 有效经验判断
 
-error_log：失败位置和关键错误总结；
+修复有效只看接口 `fixResult`：
 
-diff：脚本修改内容总结；
+- `success`、旧值 `PASS`：修复有效；
+- `fail`、旧值 `FAIL`：修复无效；
+- 其他值：结果未知。
 
-root_cause：结合轨迹、错误和 Diff 提炼根因；
+生成经验还必须满足：
 
-pattern：从已验证修复中总结可复用规则。
+- `diffContent.hasChanged=true`；
+- `changedLines` 非空；
+- 修改与主失败现象直接相关；
+- 接口当前可见数据足以支持结论。
 
-已初步确定异步经验提取方案，计划在 8 月完成穿刺及经验入库能力。
+无成功修复、没有实际修改、只增加日志或快速失败、修改与故障无关、证据不足的记录不生成经验。完整轨迹仍从接口分页读取，模型输入保留有效且实际修改的修复点，并为每个修复点保留之前最多 3 个 Step 作为上下文（上下文 Step 可以没有修改）；该数量可配置。`errorCause` 只有链接，从模型输入中排除，不下载完整日志。
 
-后续将配套的 experience-engine skill 接入脚本调测 Agent。
+### 2.3 经验内容
 
-3. 已确认的提取方案
+经验使用五段式 Markdown：
 
-使用确定性规则筛选可提取数据，不让大模型自行判断轨迹关系。
+- `Debug Trace`：上次失败、本次修改、修改后结果，并保存真实 `testUser` 和来源 Step；
+- `Error Log`：失败分类行和核心错误；
+- `Diff`：直接写入修复 Step 的原始 `diffContent.changedLines`，以 diff 代码块显示，不由模型改写；
+- `Root Cause`：根据日志和修改说明根因，区分事实和推断；
+- `Pattern`：总结触发条件和经过验证的修复动作。
 
-优先提取同时满足以下条件的可靠经验：
+### 2.4 用户和产品
 
-修改前执行失败；
+- 云见场景固定为“测试脚本调测经验”，`scene_id=421`。
+- `product_id` 使用字符串形式的 `groupId`；接口 `groupName` 保存到 `product_name`。
+- 上游 `product` 字段尚未提供，当前不填写 `metadata.product`，接口补充后再写入。
+- `testUser` 为 `"no user"`、空字符串或 `null` 时，写入 `user_id="0"`。
+- 覆盖经验时，原 `user_id` 非 `"0"` 则保持不变；原值为 `"0"` 且新数据有真实用户时允许更新。
+- Debug Trace 始终记录接口返回的真实 `testUser` 原值。
 
-存在真实脚本修改；
+## 3. 上游接口
 
-hasChanged = true；
+已提供两个 POST 接口：
 
-changedLines 非空；
+### 3.1 增量查询
 
-修改后执行成功。
+`/openapi/v1/scriptGenAgentTrajectory/listByUpdateTimeAndId`
 
-规则层整理出错误信息、真实 Diff、执行结果、产品和来源轨迹后，再交给大模型生成：
+请求字段：
 
-title
+- `updateTime`
+- `id`
+- `pageNum`
+- `pageSize`
 
-summary
+使用 `updateTime + id` 记录读取位置。增量结果只用于发现哪些 `caseId + testUser` 发生变化。
 
-debug_trace
+### 3.2 完整轨迹查询
 
-error_log
+`/openapi/v1/scriptGenAgentTrajectory/listByCaseIdAndTestUser`
 
-diff
+请求字段：
 
-root_cause
+- `caseId`
+- `testUser`
+- `pageNum`
+- `pageSize`
 
-pattern
+发现轨迹变化后，重新分页读取该组合的全部历史 Step；模型输入再按产品和有效修复点筛选。历史查询逐页读取至 `hasNextPage=false`，每页 10 条；超过模型上下文预算时按修复过程拆批。
 
-rag_search_text
+响应中的 `diffContent` 和 `customStruct` 是 JSON 字符串，需要再次解析。时间按北京时间处理；`startTime`、`endTime` 是毫秒时间戳。
 
-大模型不得虚构修改、根因或修复策略。证据不足时应明确标记“根因待确认”。
+## 4. 当前实现
 
-经验按产品强制隔离。除版本名外，建议保留稳定的 product_id 或 product_name。
+核心实现已提交到 `develop`，主要文件包括：
 
-经验需保留来源轨迹、修复结果和幂等键，支持追溯、去重及人工标注后的更新。
+| 文件 | 作用 |
+| --- | --- |
+| `memory_service/trace_experience_pipeline.py` | 查询 Step、筛选输入、调用模型、同步经验和失败续跑 |
+| `db_operate/trace_experience_store.py`、`db_operate/sql_models.py` | 保存任务游标、轨迹状态及经验引用 |
+| `project_configs/prompt_configs.py`、`project_configs/settings.py`、`constants.py` | Prompt、正式任务配置和专用常量 |
+| `models/llm_caller.py` | 模型请求、超时和安全诊断 |
+| `api/experience_api.py`、`memory_service/experience_manage.py` | 共用创建、覆盖、删除及产品过滤能力 |
+| `task_runner.py` | 仅在 `env=prod` 且任务启用时注册调测经验任务 |
+| `test/experience/test_trace_experience_pipeline.py`、`test/experience/test_trace_experience_api_compat.py` | 离线行为和原 API 兼容测试 |
+| `docs/调测轨迹经验提取设计文档.md` | 详细设计 |
 
-4. 当前样例数据结论
+正式配置位于 `TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT']`：`enabled=True`，任务名 `trace_experience_prod_20260501`，北京时间从 `2026-05-01 00:00:00` 开始、结束时间为空；每天增量运行一次。仍有历史积压时，一轮完成后最多等待 60 秒继续有界处理；本服务按单实例运行。
 
-已检查当前整份样例数据，共 20 条轨迹：
+每页增量 10 条、每轮最多 100 页；每轮先重试最多 10 条待处理或失败轨迹。模型上下文预算 50000 token，最多输出 10240 token，模型输入排除 `errorCause`。正式配置按既定要求使用 `verify_tls=False`。任务的 SQL 表已使用 `--init-tables` 初始化。
 
-hasChanged = true：0 条；
+脚本直接运行时默认初始化新增 SQL 表；手动执行一轮使用 `--once`，可再加 `--max-pages 1` 限制本轮增量页数。`--max-pages` 不限制本轮的待重试轨迹，也不限制每条轨迹的历史查询。
 
-hasChanged = false：20 条；
+## 5. 经验新建、覆盖和删除
 
-changedLines 非空：0 条；
+每个修复点使用固定经验 `doc_id`，依据为：
 
-所有记录均为 changedLines = []。
+```text
+数据来源 + groupId + fixStepId
+```
 
-结论：样例中存在 diff_content 字段，但没有真实脚本修改内容。部分记录虽有 fix_result = PASS，仍无法证明发生了“失败脚本 → 修改 → 执行成功”的有效修复。
+因此：
 
-因此，这份样例暂不能提取成成功修复经验，只能作为失败现象或错误模式候选数据保留。
+- 固定 `doc_id` 不存在：新建经验；
+- 固定 `doc_id` 已存在且内容变化：归档旧版本并覆盖；
+- 固定 `doc_id` 已存在且内容相同：跳过；
+- `fixResult` 明确变为 `fail/FAIL`，或模型合法返回 `valid=false、reason_code=unrelated`：删除本任务创建的对应经验；
+- 模型请求失败、格式错误、证据不足或结果未知：保留已有经验并等待重试。
 
-5. 待办与关键确认项
+失败现象用于经验标题、正文和检索，不参与 `doc_id` 计算，也不用于覆盖其他轨迹的经验。
 
-获取至少一组包含真实脚本 Diff 且修改后执行成功的轨迹，用于完整穿刺。
+## 6. SQL 状态设计
 
-确认产品稳定标识的来源及历史数据补齐方式。
+### 6.1 `trace_experience_job_state`
 
-明确经验库写入接口最终 Schema，至少补充：
+记录整个任务读到哪里，核心字段是 `last_update_time + last_id`。服务重启后从该位置继续读取。
 
-来源轨迹 ID；
+### 6.2 `trace_experience_record`
 
-source_type；
+记录每条轨迹的处理状态，包括：
 
-fix_result；
+- 轨迹标识；
+- 最近成功处理的完整轨迹摘要；
+- `pending/done/failed` 状态；
+- 重试次数和最近错误；
+- 已生成经验的 `doc_id`、修复 Step、来源版本和写入完成状态；模型结果先保存，写入失败可复用结果重试。损坏的 `experience_refs` 只标记失败，不覆盖原值。
 
-产品 ID；
+实际经验正文不保存在这两张表中。
 
-幂等更新键；
+## 7. 验证与已知现象
 
-Schema 版本。
+- 已用正式环境连接初始化 GaussDB 状态表，并验证上游分页、模型调用和 ES 写入。试运行曾处理 1000 条新发现轨迹：`completed=997`、`failed=3`、`created=28`、`updated=4`、`deleted=3`、`skipped=3`；这是试运行记录，不代表发布后的统计。
+- 另一次单轮结果为 `discovered=3`、`completed=1`、`failed=2`、`has_more=True`；失败对应历史数据的 `JSONDecodeError`、`TypeError`，已决定暂不清理旧数据。`has_more=True` 表示还有增量页待处理。
+- 本地针对 `test_trace_experience_pipeline.py` 的离线测试已通过；测试使用模拟接口、模型、ES 和 SQLite，不代替生产环境连接验证。测试桩已覆盖模型重试窗口，验证部分批次失败时保留先前完成的修复。
+- ES 按固定 `doc_id` 查询返回 404 表示此前不存在该经验，新建前出现属于正常现象；模型输出不完整时记录具体错误，已完成的结果可重试复用。
+- 2026-09-17 一次 CodeCheck 任务因同项目版本级检查同时运行而未能创建（`CC.10010253.400`），后续报告缺失是连带结果；该日志没有给出源码检查结论。需在占用任务结束后复验流水线。
 
-实现异步增量提取、去重、失败重试和处理状态记录。
+## 8. 后续跟踪
 
-收紧大模型提示词，确保根因和复用规则只来自可验证证据。
+1. 核实正式服务持续运行时的每日增量、积压续跑和历史失败重试；单轮 `--once --max-pages 1` 可用于定位，不会启动其他定时任务。
+2. 另行处理既有坏数据及模型输出失败记录；避免为排障清空或覆盖已有经验引用。
+3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
+4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
-第一版仅入库“有真实 Diff 且修改后执行成功”的高可信经验；“报错后移”类部分成功经验后续再支持。
+## 9. 关键文档
 
-6. 当前状态
-
-当前处于经验提取方案已明确、真实成功修复样例待补充、异步提取链路穿刺中的阶段。下一步应优先取得有效 Diff 样例，完成从轨迹输入、大模型总结到经验库入库的端到端验证。
+- [调测轨迹经验提取设计文档](./调测轨迹经验提取设计文档.md)
+- [调测轨迹经验提取最简方案](./调测轨迹经验提取最简方案.md)
+- [调测轨迹经验提取最简实现方案](./调测轨迹经验提取最简实现方案.md)
+- [经验管理 API 文档](./经验管理%20API%20文档.md)

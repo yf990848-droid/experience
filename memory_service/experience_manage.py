@@ -9,7 +9,7 @@ from constants import PRODUCT, FILTER, SOURCE, ID, DOC_ID, SCORE
 from logger import logger
 from memory_service.service_params import ProductInfo
 from project_configs.settings import UNIFIED_INDEX, VECTOR_FIELD_MAP, \
-    BM25_FIELD_MAP, EXCLUDED_SOURCE_FIELDS, SIMPLE_FILTER_FIELDS, GET_PDUNAME_URL
+    BM25_FIELD_MAP, EXCLUDED_SOURCE_FIELDS, SIMPLE_FILTER_FIELDS, GET_PDUNAME_URL, EXPERIENCE_PRODUCT_ID_FIELD
 from db.es_connector import AI_test_es_client
 
 
@@ -27,7 +27,8 @@ def _build_term_or_terms_clause(es_field: str, value: Union[str, List[str]]) -> 
 def _build_product_clauses(product: ProductInfo) -> List[Dict[str, Any]]:
     """从 ProductInfo 构建 product.* 的 term/terms 子句（值为列表时用 terms）"""
     return [
-        _build_term_or_terms_clause(f"{PRODUCT}.{field}", value)
+        _build_term_or_terms_clause(
+            EXPERIENCE_PRODUCT_ID_FIELD if field == "product_id" else f"{PRODUCT}.{field}", value)
         for field, value in product.dict(exclude_none=True).items()
     ]
 
@@ -336,3 +337,4 @@ def format_scene_result(mapper: dict, count_map: dict) -> dict:
             "children": children,
         }
     return result
+

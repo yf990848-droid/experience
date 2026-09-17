@@ -189,6 +189,7 @@ class AgentRouterRequest(BaseModel):
 
 
 class ProductInfo(BaseModel):
+    product_id: Optional[str] = None
     pdu_name: Optional[Union[str, List[str]]] = None  # 支持单个或多个部门
     pdu_code: Optional[str] = None
     product_name: Optional[str] = None

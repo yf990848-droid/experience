@@ -200,8 +200,8 @@ def add_quality_check_task(
     )
 
 
-@router_experience.post("/doc")
-def create_doc(body: DocumentCreate, background_tasks: BackgroundTasks):
+def upsert_experience(body: DocumentCreate, background_tasks=None):
+    """API 和定时任务共用的写入函数；异常由调用方处理。"""
     es = get_es_client()
     now = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
     doc_id = body.doc_id or str(uuid.uuid4())
@@ -228,36 +228,31 @@ def create_doc(body: DocumentCreate, background_tasks: BackgroundTasks):
         body=body,
     )
 
+    result_type = index_unified_document(
+        es=es,
+        doc_id=doc_id,
+        doc=doc,
+    )
+
+    if background_tasks is not None:
+        add_quality_check_task(background_tasks, doc_id, body)
+
+    return {
+        "id": doc_id,
+        "scene_id": body.scene_id,
+        "vectorized_fields": vectorized_fields,
+        "version": version_info["new_version"],
+        "is_overwrite": version_info["is_overwrite"],
+        "archived_history_id": version_info["archived_history_id"],
+        "upserted": int(result_type == "created"),
+        "updated": int(result_type == "updated"),
+    }
+@router_experience.post("/doc")
+def create_doc(body: DocumentCreate, background_tasks: BackgroundTasks):
     try:
-        result_type = index_unified_document(
-            es=es,
-            doc_id=doc_id,
-            doc=doc,
-        )
-
-        add_quality_check_task(
-            background_tasks=background_tasks,
-            doc_id=doc_id,
-            body=body,
-        )
-
-        return success_response(data={
-            "id": doc_id,
-            "scene_id": body.scene_id,
-            "vectorized_fields": vectorized_fields,
-            "version": version_info["new_version"],
-            "is_overwrite": version_info["is_overwrite"],
-            "archived_history_id": version_info["archived_history_id"],
-            "upserted": int(result_type == "created"),
-            "updated": int(result_type == "updated"),
-        })
-
+        return success_response(data=upsert_experience(body, background_tasks))
     except Exception as e:
-        return error_response(
-            code=500,
-            msg=f"写入失败: {str(e)}",
-            status_code=500,
-        )
+        return error_response(code=500, msg=f"写入失败: {str(e)}", status_code=500)
 
 
 @router_experience.put("/doc/{doc_id}")
@@ -324,22 +319,20 @@ def update_doc(doc_id: str, body: DocumentUpdate, background_tasks: BackgroundTa
 
 
 # ------------------ 删除接口 ------------------
+def delete_experience(doc_id: str):
+    """共用删除函数；不存在时抛 NotFoundError，由调用方决定处理方式。"""
+    es = get_es_client()
+    existing = es.get(index=UNIFIED_INDEX, id=doc_id)
+    archive_document(es_source=existing.get("_source", {}), doc_id=doc_id,
+                     action_type=ACTION_DELETED)
+    es.delete(index=UNIFIED_INDEX, id=doc_id)
+    return {"deleted": 1}
+
+
 @router_experience.delete("/doc/{doc_id}")
 def delete_doc(doc_id: str):
-    es = get_es_client()
     try:
-        try:
-            existing = es.get(index=UNIFIED_INDEX, id=doc_id)
-            archive_document(
-                es_source=existing.get("_source", {}),
-                doc_id=doc_id,
-                action_type=ACTION_DELETED,
-            )
-        except NotFoundError:
-            return error_response(code=404, msg=f"文档 {doc_id} 不存在", status_code=404)
-
-        es.delete(index=UNIFIED_INDEX, id=doc_id)
-        return success_response(data={"deleted": 1})
+        return success_response(data=delete_experience(doc_id))
     except NotFoundError:
         return error_response(code=404, msg=f"文档 {doc_id} 不存在", status_code=404)
     except Exception as e:
