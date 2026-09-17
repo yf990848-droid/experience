@@ -1,7 +1,7 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-09-11  
-当前分支：`develop`
+更新时间：2026-09-17  
+维护分支：`develop`；发布分支：`main`
 
 ## 1. 背景与目标
 
@@ -45,7 +45,7 @@
 - 修改与主失败现象直接相关；
 - 接口当前可见数据足以支持结论。
 
-无成功修复、没有实际修改、只增加日志或快速失败、修改与故障无关、证据不足的记录不生成经验。当前约定只分析接口直接返回的数据，不下载 `errorCause` 指向的完整日志。
+无成功修复、没有实际修改、只增加日志或快速失败、修改与故障无关、证据不足的记录不生成经验。完整轨迹仍从接口分页读取，模型输入保留有效且实际修改的修复点，并为每个修复点保留之前最多 3 个 Step 作为上下文（上下文 Step 可以没有修改）；该数量可配置。`errorCause` 只有链接，从模型输入中排除，不下载完整日志。
 
 ### 2.3 经验内容
 
@@ -53,14 +53,14 @@
 
 - `Debug Trace`：上次失败、本次修改、修改后结果，并保存真实 `testUser` 和来源 Step；
 - `Error Log`：失败分类行和核心错误；
-- `Diff`：只保留与修复直接相关的实际修改；
+- `Diff`：直接写入修复 Step 的原始 `diffContent.changedLines`，以 diff 代码块显示，不由模型改写；
 - `Root Cause`：根据日志和修改说明根因，区分事实和推断；
 - `Pattern`：总结触发条件和经过验证的修复动作。
 
 ### 2.4 用户和产品
 
 - 云见场景固定为“测试脚本调测经验”，`scene_id=421`。
-- `product_id` 暂取字符串形式的 `groupId`。
+- `product_id` 使用字符串形式的 `groupId`；接口 `groupName` 保存到 `product_name`。
 - 上游 `product` 字段尚未提供，当前不填写 `metadata.product`，接口补充后再写入。
 - `testUser` 为 `"no user"`、空字符串或 `null` 时，写入 `user_id="0"`。
 - 覆盖经验时，原 `user_id` 非 `"0"` 则保持不变；原值为 `"0"` 且新数据有真实用户时允许更新。
@@ -94,7 +94,7 @@
 - `pageNum`
 - `pageSize`
 
-发现轨迹变化后，重新分页读取该组合的全部历史 Step，模型看到的是包含旧数据和新数据的完整轨迹。
+发现轨迹变化后，重新分页读取该组合的全部历史 Step；模型输入再按产品和有效修复点筛选。历史查询逐页读取至 `hasNextPage=false`，每页 10 条；超过模型上下文预算时按修复过程拆批。
 
 响应中的 `diffContent` 和 `customStruct` 是 JSON 字符串，需要再次解析。时间按北京时间处理；`startTime`、`endTime` 是毫秒时间戳。
 
@@ -104,19 +104,20 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `memory_service/trace_experience_pipeline.py` | 查询 Step、整理轨迹、调用模型、同步经验 |
-| `db_operate/trace_experience_store.py` | 建表、保存游标和轨迹处理结果 |
-| `db_operate/sql_models.py` | 定义任务状态表和轨迹处理记录表 |
-| `project_configs/prompt_configs.py` | 经验提取 Prompt |
-| `project_configs/settings.py` | 任务周期、时间范围、接口、模型等配置 |
-| `models/llm_caller.py` | 模型请求、超时及安全诊断日志 |
-| `api/experience_api.py` | 共用经验创建、覆盖和删除能力 |
-| `task_runner.py` | 注册周期任务 |
-| `docs/调测轨迹经验提取设计文档.md` | 完整业务和实现设计 |
+| `memory_service/trace_experience_pipeline.py` | 查询 Step、筛选输入、调用模型、同步经验和失败续跑 |
+| `db_operate/trace_experience_store.py`、`db_operate/sql_models.py` | 保存任务游标、轨迹状态及经验引用 |
+| `project_configs/prompt_configs.py`、`project_configs/settings.py`、`constants.py` | Prompt、正式任务配置和专用常量 |
+| `models/llm_caller.py` | 模型请求、超时和安全诊断 |
+| `api/experience_api.py`、`memory_service/experience_manage.py` | 共用创建、覆盖、删除及产品过滤能力 |
+| `task_runner.py` | 仅在 `env=prod` 且任务启用时注册调测经验任务 |
+| `test/experience/test_trace_experience_pipeline.py`、`test/experience/test_trace_experience_api_compat.py` | 离线行为和原 API 兼容测试 |
+| `docs/调测轨迹经验提取设计文档.md` | 详细设计 |
 
-当前 memory 服务确定为单实例运行，定时任务不增加分布式锁。执行周期可配置，初版每天运行一次。试运行时间范围为北京时间 2026 年 8 月至 9 月。
+正式配置位于 `TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT']`：`enabled=True`，任务名 `trace_experience_prod_20260501`，北京时间从 `2026-05-01 00:00:00` 开始、结束时间为空；每天增量运行一次。仍有历史积压时，一轮完成后最多等待 60 秒继续有界处理；本服务按单实例运行。
 
-脚本直接运行时默认初始化新增 SQL 表，也支持显式传入 `--init-tables`。手动小范围验证可使用 `--once --max-pages 1`。
+每页增量 10 条、每轮最多 100 页；每轮先重试最多 10 条待处理或失败轨迹。模型上下文预算 50000 token，最多输出 10240 token，模型输入排除 `errorCause`。正式配置按既定要求使用 `verify_tls=False`。任务的 SQL 表已使用 `--init-tables` 初始化。
+
+脚本直接运行时默认初始化新增 SQL 表；手动执行一轮使用 `--once`，可再加 `--max-pages 1` 限制本轮增量页数。`--max-pages` 不限制本轮的待重试轨迹，也不限制每条轨迹的历史查询。
 
 ## 5. 经验新建、覆盖和删除
 
@@ -148,62 +149,26 @@
 
 - 轨迹标识；
 - 最近成功处理的完整轨迹摘要；
-- `pending/success/skipped/failed` 状态；
+- `pending/done/failed` 状态；
 - 重试次数和最近错误；
-- 已生成经验的 `doc_id`、`fixStepId`、内容摘要和同步结果。
+- 已生成经验的 `doc_id`、修复 Step、来源版本和写入完成状态；模型结果先保存，写入失败可复用结果重试。损坏的 `experience_refs` 只标记失败，不覆盖原值。
 
 实际经验正文不保存在这两张表中。
 
-## 7. 当前联调结果
+## 7. 验证与已知现象
 
-已经确认：
+- 已用正式环境连接初始化 GaussDB 状态表，并验证上游分页、模型调用和 ES 写入。试运行曾处理 1000 条新发现轨迹：`completed=997`、`failed=3`、`created=28`、`updated=4`、`deleted=3`、`skipped=3`；这是试运行记录，不代表发布后的统计。
+- 另一次单轮结果为 `discovered=3`、`completed=1`、`failed=2`、`has_more=True`；失败对应历史数据的 `JSONDecodeError`、`TypeError`，已决定暂不清理旧数据。`has_more=True` 表示还有增量页待处理。
+- 本地针对 `test_trace_experience_pipeline.py` 的离线测试已通过；测试使用模拟接口、模型、ES 和 SQLite，不代替生产环境连接验证。测试桩已覆盖模型重试窗口，验证部分批次失败时保留先前完成的修复。
+- ES 按固定 `doc_id` 查询返回 404 表示此前不存在该经验，新建前出现属于正常现象；模型输出不完整时记录具体错误，已完成的结果可重试复用。
+- 2026-09-17 一次 CodeCheck 任务因同项目版本级检查同时运行而未能创建（`CC.10010253.400`），后续报告缺失是连带结果；该日志没有给出源码检查结论。需在占用任务结束后复验流水线。
 
-- GaussDB 连接和新增状态表初始化成功；
-- CloudSpider 接口可以分页读取数据；
-- Elasticsearch 可以访问；
-- 模型凭据解密后，简单 Prompt 可以正常返回；
-- 模型可能在 `Message` 前输出分析文字并在末尾输出 JSON 数组，解析器已兼容末尾合法数组；
-- 模型请求异常或空响应最多重试 3 次；
-- 单条轨迹失败不会终止整个任务，任务最终可正常退出。
+## 8. 后续跟踪
 
-最近一次运行出现大量：
-
-### 7.1 `invalid_model_array`
-
-模型请求返回了内容，但没有通过经验数组校验。可能包括：
-
-- 没有合法 JSON 数组；
-- JSON 被截断；
-- 数组类型或字段不正确；
-- 返回的修复 Step ID 与请求不一致；
-- 多修复点返回数量不一致。
-
-当前日志只显示统一错误名，还不能确认具体是哪项校验失败。
-
-### 7.2 `model_request_failed`
-
-模型网关返回 HTTP 200，但响应只有 26 个字符，外层内容无法按 JSON 解析。连续重试 3 次仍失败后，轨迹记录为 `model_request_failed`。
-
-### 7.3 可忽略或暂不阻塞的问题
-
-- ES 查询固定 `doc_id` 返回 404：表示经验尚不存在，是新建前的正常查询，不是故障。
-- `InsecureRequestWarning`：本地关闭 TLS 证书校验产生的警告，不是模型失败原因；正式部署需要配置可信 CA。
-- Pydantic `model_id` 命名警告和 GaussDB SQL 缓存警告目前不阻塞功能。
-- 汇总中的 `discovered` 只表示本轮新发现数量，`completed/failed` 可能还包含历史待处理记录，因此三者不一定相加相等。
-
-## 8. 当前待办
-
-1. 给 `invalid_model_array` 增加更具体、脱敏的失败原因，例如：无数组、数量不一致、修复 ID 不一致、缺少字段。
-2. 对模型网关的短响应增加安全诊断，只记录外层字段名、`Status`、`Message` 是否存在及类型，不打印完整响应。
-3. 使用少量真实轨迹复验：
-   - 模型返回 `valid=true` 时能够新建经验；
-   - 重复运行内容相同则跳过；
-   - 轨迹更新后能够覆盖；
-   - `fixResult` 失效后能够删除；
-   - 证据不足时不创建且不删除已有经验。
-4. 上游补充 `product` 字段后写入 `metadata.product`。
-5. 正式上线前确认 ES Mapping、TLS CA 和生产配置。
-6. 试运行验证稳定后，再扩大处理时间范围。
+1. 核实正式服务持续运行时的每日增量、积压续跑和历史失败重试；单轮 `--once --max-pages 1` 可用于定位，不会启动其他定时任务。
+2. 另行处理既有坏数据及模型输出失败记录；避免为排障清空或覆盖已有经验引用。
+3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
+4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
 ## 9. 关键文档
 
