@@ -212,13 +212,26 @@ def test_cursor_transaction_rolls_back_discovery(setup):
         if statement.startswith('UPDATE trace_experience_job_state'):
             raise OperationalError(statement, parameters, Exception('failed'))
     event.listen(store.engine, 'before_cursor_execute', reject)
-    with pytest.raises(OperationalError):
-        store.discover('test', [identity(step(2, caseId='other'))], (utc_time(step()['updateTime']), 2))
-    event.remove(store.engine, 'before_cursor_execute', reject)
+    try:
+        with pytest.raises(OperationalError):
+            store.discover('test', [identity(step(2, caseId='other'))], (utc_time(step()['updateTime']), 2))
+    finally:
+        event.remove(store.engine, 'before_cursor_execute', reject)
     assert store.job('test', pipeline.start, pipeline.end).last_id == 1
     from db_operate.sql_models import TraceExperienceRecord
     with store.sessions() as session:
         assert session.query(TraceExperienceRecord).count() == 1
+
+
+@pytest.mark.parametrize('raw', ['{', 'null'])
+def test_invalid_experience_refs_preserved(setup, raw):
+    cfg, store, rows, client, call, writer, pipeline, key = setup
+    from db_operate.sql_models import TraceExperienceRecord
+    with store.sessions.begin() as session:
+        session.get(TraceExperienceRecord, key).experience_refs = raw
+    pipeline.process(key)
+    assert store.get(key).experience_refs == raw
+    assert store.get(key).process_status == 'failed'
 
 
 def test_incorrect_incremental_order_does_not_move_cursor(setup):
@@ -273,11 +286,15 @@ def test_overlong_single_repair_fails_without_deletion(setup):
     assert call.call_count == 1
 
 
-def test_model_boolean_strings_or_unknown_refs_rejected():
-    for change in ({'valid': 'false'}, {'related_step_ids': ['999']}, {'title': ''}):
-        extractor = Extractor(config(), lambda p: json.dumps([item(**change)]), len)
-        with pytest.raises(ValueError):
-            extractor.extract([step()], ['1'])
+@pytest.mark.parametrize('change', [
+    pytest.param({'valid': 'false'}, id='valid-string'),
+    pytest.param({'related_step_ids': ['999']}, id='unknown-step'),
+    pytest.param({'title': ''}, id='empty-title'),
+])
+def test_model_boolean_strings_or_unknown_refs_rejected(change):
+    extractor = Extractor(config(), lambda p: json.dumps([item(**change)]), len)
+    with pytest.raises(ValueError):
+        extractor.extract([step()], ['1'])
 
 
 def test_large_trace_splits_repair_batches(setup):
