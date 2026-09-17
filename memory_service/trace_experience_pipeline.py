@@ -201,7 +201,6 @@ class Extractor:
             raise ValueError('incomplete_model_result')
         return output
 
-
     def prompt(self, steps, ids):
         excluded = set(self.cfg.get('model_input_exclude_fields', []))
         model_steps = [
@@ -275,7 +274,6 @@ class Extractor:
                             str(exc), attempt, attempts, len(text))
                 last_error = str(exc)
         raise ValueError(last_error if saw_response else 'model_request_failed')
-
 
 
 class ExperienceWriter:
