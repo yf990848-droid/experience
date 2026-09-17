@@ -395,9 +395,15 @@ class Pipeline:
         ref['done'] = True
 
     def process(self, key):
-        row = self.store.get(key)
-        refs = json.loads(row.experience_refs)
+        row, refs = None, None
         try:
+            row = self.store.get(key)
+            if row is None:
+                raise ValueError('trace_record_missing')
+            loaded_refs = json.loads(row.experience_refs)
+            if not isinstance(loaded_refs, list):
+                raise ValueError('invalid_experience_refs')
+            refs = loaded_refs
             steps = self.client.history(row.case_id, json.loads(row.source_test_user_json))
             revision = digest([steps, self.cfg['extraction_version'], self.cfg['model_name'],
                                self.cfg['range_start'], self.cfg.get('range_end'),
@@ -418,7 +424,8 @@ class Pipeline:
             # 不记录响应正文、日志、密钥；错误类型供管理员定位对应模块。
             code = (str(exc) if isinstance(exc, ValueError) and str(exc).replace('_', '').isalnum()
                     else type(exc).__name__)
-            self.store.save(key, refs, status='failed', error=code[:200])
+            if row is not None:
+                self.store.save(key, refs, status='failed', error=code[:200])
             self.summary['failed'] += 1
             LOG.warning('trace experience failed record=%s error=%s', key, code)
 
