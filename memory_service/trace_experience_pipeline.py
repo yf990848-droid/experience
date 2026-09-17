@@ -409,47 +409,7 @@ class Pipeline:
             for step in steps:
                 groups[str(step['groupId'])].append(step)
             for group_steps in groups.values():
-                # 修复结论明确变为无效时撤销本任务生成的经验。
-                for step in group_steps:
-                    if result(step) in INVALID:
-                        self.apply(step, {'action': 'delete'})
-                selected = []
-                for step in group_steps:
-                    if not eligible(step, self.start, self.end):
-                        continue
-                    saved = next((r for r in refs if r['doc_id'] == doc_id(step) and r['revision'] == revision), None)
-                    if saved:
-                        if not saved.get('done'):
-                            self.apply(step, saved)
-                            self.store.save(key, refs)
-                        else:
-                            self.summary['skipped'] += 1
-                    else:
-                        selected.append(step)
-                selected_ids = {step['id'] for step in selected}
-                model_step_ids = set()
-                for index, step in enumerate(group_steps):
-                    if step['id'] not in selected_ids:
-                        continue
-                    start = max(0, index - self.history_steps_before_fix)
-                    model_step_ids.update(
-                        context_step['id'] for context_step in group_steps[start:index + 1])
-                model_steps = [step for step in group_steps if step['id'] in model_step_ids]
-                for batch, ids in self.extractor.batches(model_steps, selected):
-                    items = self.extractor.extract(batch, ids)
-                    for item in items:
-                        step = by_id[item['fix_step_id']]
-                        ref = {'doc_id': doc_id(step), 'revision': revision, 'done': False}
-                        if item['valid']:
-                            ref.update(action='put', body=build_body(step, item, revision, self.owned(step)))
-                        elif item['reason_code'] == 'unrelated':
-                            ref['action'] = 'delete'
-                        else:
-                            ref.update(action='keep', reason=item['reason'])
-                        refs = [r for r in refs if r['doc_id'] != ref['doc_id']] + [ref]
-                        self.store.save(key, refs)  # 先保存模型结果；写入失败后可直接重试。
-                        self.apply(step, ref)
-                        self.store.save(key, refs)
+                self._process_group(key, group_steps, by_id, refs, revision)
             self.store.save(key, refs, status='done', revision=revision)
             self.summary['completed'] += 1
         except SQLAlchemyError:
@@ -503,6 +463,52 @@ class Pipeline:
                 raise ValueError('empty_incremental_middle_page')
         LOG.info('trace experience summary=%s', self.summary)
         return dict(self.summary)
+
+    def _process_group(self, key, group_steps, by_id, refs, revision):
+        # 修复结论明确变为无效时撤销本任务生成的经验。
+        for step in group_steps:
+            if result(step) in INVALID:
+                self.apply(step, {'action': 'delete'})
+        selected = []
+        for step in group_steps:
+            if not eligible(step, self.start, self.end):
+                continue
+            saved = next((r for r in refs if r['doc_id'] == doc_id(step) and r['revision'] == revision), None)
+            if saved:
+                if not saved.get('done'):
+                    self.apply(step, saved)
+                    self.store.save(key, refs)
+                else:
+                    self.summary['skipped'] += 1
+            else:
+                selected.append(step)
+        selected_ids = {step['id'] for step in selected}
+        model_step_ids = set()
+        for index, step in enumerate(group_steps):
+            if step['id'] not in selected_ids:
+                continue
+            start = max(0, index - self.history_steps_before_fix)
+            model_step_ids.update(
+                context_step['id'] for context_step in group_steps[start:index + 1])
+        model_steps = [step for step in group_steps if step['id'] in model_step_ids]
+        for batch, ids in self.extractor.batches(model_steps, selected):
+            items = self.extractor.extract(batch, ids)
+            for item in items:
+                self._save_model_item(key, refs, revision, by_id, item)
+
+    def _save_model_item(self, key, refs, revision, by_id, item):
+        step = by_id[item['fix_step_id']]
+        ref = {'doc_id': doc_id(step), 'revision': revision, 'done': False}
+        if item['valid']:
+            ref.update(action='put', body=build_body(step, item, revision, self.owned(step)))
+        elif item['reason_code'] == 'unrelated':
+            ref['action'] = 'delete'
+        else:
+            ref.update(action='keep', reason=item['reason'])
+        refs[:] = [r for r in refs if r['doc_id'] != ref['doc_id']] + [ref]
+        self.store.save(key, refs)  # 先保存模型结果；写入失败后可直接重试。
+        self.apply(step, ref)
+        self.store.save(key, refs)
 
 
 def init_trace_tables():
