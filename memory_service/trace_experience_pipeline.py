@@ -10,15 +10,11 @@ from datetime import datetime, timedelta
 import requests
 from sqlalchemy.exc import SQLAlchemyError
 
+from constants import TRACE_SOURCE, TRACE_VALID_RESULTS, TRACE_INVALID_RESULTS, TRACE_TEXT_FIELDS
 from db_operate.trace_experience_store import TraceStateStore, digest, json_text
 from project_configs.prompt_configs import TRACE_EXPERIENCE_PROMPT
 
 LOG = logging.getLogger(__name__)
-SOURCE = 'trace_experience'
-VALID = {'success', 'pass'}
-INVALID = {'fail'}
-TEXT_FIELDS = ('title', 'failure_phenomenon', 'summary', 'debug_trace', 'error_log',
-               'root_cause', 'pattern', 'rag_search_text')
 
 
 def utc_time(value):
@@ -38,7 +34,7 @@ def user_id(value):
 
 
 def doc_id(step):
-    return 'tracefix_' + digest([SOURCE, str(step['groupId']), str(step['id'])])[:48]
+    return 'tracefix_' + digest([TRACE_SOURCE, str(step['groupId']), str(step['id'])])[:48]
 
 
 def identity(raw):
@@ -97,7 +93,7 @@ def parse_model_array(text):
 def eligible(step, start, end):
     changed = step.get('diffContent') or {}
     when = utc_time(step['updateTime'])
-    return (start <= when and (end is None or when < end) and result(step) in VALID
+    return (start <= when and (end is None or when < end) and result(step) in TRACE_VALID_RESULTS
             and changed.get('hasChanged') is True and bool(changed.get('changedLines')))
 
 
@@ -193,7 +189,7 @@ class Extractor:
             if not isinstance(item.get('reason'), str) or not item['reason'].strip():
                 raise ValueError('missing_model_reason')
             if item['valid']:
-                if any(not isinstance(item.get(f), str) or not item[f].strip() for f in TEXT_FIELDS):
+                if any(not isinstance(item.get(f), str) or not item[f].strip() for f in TRACE_TEXT_FIELDS):
                     raise ValueError('incomplete_model_experience')
             elif item.get('reason_code') not in ('unrelated', 'insufficient_evidence'):
                 raise ValueError('invalid_model_reason_code')
@@ -245,7 +241,7 @@ class Extractor:
         previous = 0
         selected_ids = set(ids)
         for i, step in enumerate(steps):
-            if result(step) not in VALID:
+            if result(step) not in TRACE_VALID_RESULTS:
                 continue
             if str(step['id']) in selected_ids:
                 yield steps[previous:min(i + 2, len(steps))], [str(step['id'])]
@@ -338,7 +334,7 @@ def build_body(step, item, revision, existing):
     content = '\n\n'.join('## ' + title + '\n\n' + value for title, value in (
         ('Debug Trace', trace), ('Error Log', error_log), ('Diff', diff),
         ('Root Cause', item['root_cause']), ('Pattern', item['pattern'])))
-    metadata = {'source': SOURCE, 'group_id': str(step['groupId']),
+    metadata = {'source': TRACE_SOURCE, 'group_id': str(step['groupId']),
                 'fix_step_id': str(step['id']), 'source_revision': revision,
                 'failure_phenomenon': item['failure_phenomenon'],
                 'related_step_ids': item['related_step_ids']}
@@ -372,7 +368,7 @@ class Pipeline:
         if existing:
             metadata = existing.get('metadata', {})
             owner = (metadata.get('source'), metadata.get('fix_step_id'), metadata.get('group_id'))
-            expected = (SOURCE, str(step['id']), str(step['groupId']))
+            expected = (TRACE_SOURCE, str(step['id']), str(step['groupId']))
             if owner != expected:
                 raise ValueError('document_owner_mismatch')
         return existing
@@ -474,7 +470,7 @@ class Pipeline:
     def _process_group(self, key, group_steps, by_id, refs, revision):
         # 修复结论明确变为无效时撤销本任务生成的经验。
         for step in group_steps:
-            if result(step) in INVALID:
+            if result(step) in TRACE_INVALID_RESULTS:
                 self.apply(step, {'action': 'delete'})
         selected = []
         for step in group_steps:
