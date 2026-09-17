@@ -29,6 +29,10 @@ def source_time(value):
     return (value + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S')
 
 
+def is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def user_id(value):
     return '0' if value is None or str(value).strip().lower() in ('', 'no user') else str(value)
 
@@ -38,7 +42,7 @@ def doc_id(step):
 
 
 def identity(raw):
-    if not isinstance(raw, dict) or type(raw.get('id')) is not int or raw['id'] <= 0:
+    if not isinstance(raw, dict) or not is_int(raw.get('id')) or raw['id'] <= 0:
         raise ValueError('invalid_step_id')
     if not isinstance(raw.get('caseId'), str) or not raw['caseId']:
         raise ValueError('invalid_case_id')
@@ -65,7 +69,7 @@ def normalize(raw):
                                   any(not isinstance(line, str) for line in diff['changedLines'])):
         raise ValueError('invalid_changed_lines')
     for field in ('startTime', 'endTime'):
-        if step.get(field) is not None and type(step[field]) is not int:
+        if step.get(field) is not None and not is_int(step[field]):
             raise ValueError('invalid_step_time')
     return step
 
@@ -122,7 +126,7 @@ class StepClient:
                 if body.get('success') is not True or not isinstance(body.get('content'), dict):
                     raise ValueError('source_response_failed')
                 page = body['content']
-                if not isinstance(page.get('list'), list) or type(page.get('hasNextPage')) is not bool:
+                if not isinstance(page.get('list'), list) or not isinstance(page.get('hasNextPage'), bool):
                     raise ValueError('invalid_page')
                 return page
             except (requests.Timeout, requests.ConnectionError):
@@ -141,7 +145,7 @@ class StepClient:
             page = self.page('listByCaseIdAndTestUser', {
                 'caseId': case_id, 'testUser': test_user,
                 'pageNum': page_num, 'pageSize': self.cfg['page_size']})
-            if type(page.get('total')) is not int or page['total'] < 0:
+            if not is_int(page.get('total')) or page['total'] < 0:
                 raise ValueError('invalid_history_total')
             if total is None:
                 total = page['total']
@@ -161,8 +165,11 @@ class StepClient:
             page_num += 1
         if len(records) != total:
             raise ValueError('incomplete_history')
-        return sorted(records.values(), key=lambda s: (
-            s.get('startTime') or 0, s.get('endTime') or 0, s['updateTime'], s['id']))
+        def sort_key(step):
+            return (step.get('startTime') or 0, step.get('endTime') or 0,
+                    step['updateTime'], step['id'])
+
+        return sorted(records.values(), key=sort_key)
 
 
 class Extractor:
@@ -243,13 +250,14 @@ class Extractor:
                 last_error = str(exc)
         raise ValueError(last_error if saw_response else 'model_request_failed')
 
-    def validate_output(self, output, steps, ids):
+    @staticmethod
+    def validate_output(output, steps, ids):
         known, seen = {str(s['id']) for s in steps}, set()
         for item in output:
             if not isinstance(item, dict):
                 raise ValueError('invalid_model_item')
             fix_id = item.get('fix_step_id')
-            if fix_id not in ids or fix_id in seen or type(item.get('valid')) is not bool:
+            if fix_id not in ids or fix_id in seen or not isinstance(item.get('valid'), bool):
                 raise ValueError('invalid_model_fix_id')
             seen.add(fix_id)
             refs = item.get('related_step_ids')
@@ -354,17 +362,19 @@ class Pipeline:
         self.start = utc_time(config['range_start'])
         self.end = utc_time(config['range_end']) if config.get('range_end') else None
         self.history_steps_before_fix = config.get('history_steps_before_fix', 3)
-        if type(self.history_steps_before_fix) is not int or self.history_steps_before_fix < 0:
+        if not is_int(self.history_steps_before_fix) or self.history_steps_before_fix < 0:
             raise ValueError('invalid_history_steps_before_fix')
         if self.end is not None and self.end <= self.start:
             raise ValueError('invalid_time_range')
 
     def owned(self, step):
         existing = self.writer.get(doc_id(step))
-        if existing and (existing.get('metadata', {}).get('source') != SOURCE or
-                         existing.get('metadata', {}).get('fix_step_id') != str(step['id']) or
-                         existing.get('metadata', {}).get('group_id') != str(step['groupId'])):
-            raise ValueError('document_owner_mismatch')
+        if existing:
+            metadata = existing.get('metadata', {})
+            owner = (metadata.get('source'), metadata.get('fix_step_id'), metadata.get('group_id'))
+            expected = (SOURCE, str(step['id']), str(step['groupId']))
+            if owner != expected:
+                raise ValueError('document_owner_mismatch')
         return existing
 
     def apply(self, step, ref):
@@ -446,7 +456,8 @@ class Pipeline:
             raise
         except Exception as exc:
             # 不记录响应正文、日志、密钥；错误类型供管理员定位对应模块。
-            code = str(exc) if isinstance(exc, ValueError) and str(exc).replace('_', '').isalnum() else type(exc).__name__
+            code = (str(exc) if isinstance(exc, ValueError) and str(exc).replace('_', '').isalnum()
+                    else type(exc).__name__)
             self.store.save(key, refs, status='failed', error=code[:200])
             self.summary['failed'] += 1
             LOG.warning('trace experience failed record=%s error=%s', key, code)
@@ -494,22 +505,28 @@ class Pipeline:
         return dict(self.summary)
 
 
-def run_pipeline_once(config=None, init_tables=False):
+def init_trace_tables():
+    from db.sql_connector import get_sql_connector
+    TraceStateStore(get_sql_connector().engine).create_tables()
+
+
+def run_pipeline_once(config=None):
     if config is None:
         from project_configs.settings import TASK_RUNNER_CONFIG
         config = TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT']
     from db.sql_connector import get_sql_connector
     store = TraceStateStore(get_sql_connector().engine)
-    if init_tables:
-        store.create_tables()
-        return
     if not isinstance(config.get('context_limit'), int) or config['context_limit'] <= 0:
         raise ValueError('请配置模型实际 context_limit 后运行')
     from models.llm_caller import LLMCaller
     from utils.token_utils import token_count
     caller = LLMCaller(scene='测试脚本调测经验', model_name=config['model_name'])
-    extractor = Extractor(config, lambda prompt: caller.model_call(
-        prompt, timeout=config['llm_timeout'], max_output_tokens=config['max_output_tokens']), token_count)
+    def call_model(prompt):
+        return caller.model_call(
+            prompt, timeout=config['llm_timeout'],
+            max_output_tokens=config['max_output_tokens'])
+
+    extractor = Extractor(config, call_model, token_count)
     return Pipeline(config, store, StepClient(config), extractor, ExperienceWriter()).run()
 
 
@@ -528,4 +545,7 @@ if __name__ == '__main__':
             parser.error('--max-pages 必须大于 0')
         cfg['max_pages_per_run'] = args.max_pages
     logging.basicConfig(level=logging.INFO)
-    run_pipeline_once(cfg, init_tables=args.init_tables or not args.once)
+    if args.init_tables or not args.once:
+        init_trace_tables()
+    else:
+        run_pipeline_once(cfg)
