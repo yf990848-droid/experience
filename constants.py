@@ -253,3 +253,10 @@ GENERATION_UPLOADER_FIELD = USER_ID
 CODE_AGENT_PIPELINE = 'CODE_AGENT_PIPELINE'
 RUN_AT_HOUR = 'run_at_hour'
 RUN_AT_MINUTE = 'run_at_minute'
+
+# 调测轨迹经验提取
+TRACE_SOURCE = 'trace_experience'
+TRACE_VALID_RESULTS = {'success', 'pass'}
+TRACE_INVALID_RESULTS = {'fail'}
+TRACE_TEXT_FIELDS = ('title', 'failure_phenomenon', 'summary', 'debug_trace', 'error_log',
+                     'root_cause', 'pattern', 'rag_search_text')
