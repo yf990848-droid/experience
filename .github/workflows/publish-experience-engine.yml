@@ -44,7 +44,7 @@ jobs:
           - 打包范围：skills/experience-engine
           - 下载文件：experience-engine.zip
           - 解压后目录：experience-engine/，可放入项目的 .opencode/skills/ 下。
-          - 使用前在 references/experience-guide-testdebug.md 中填写实际产品名称。
+          - 可在 references/experience-guide-testdebug.md 中配置产品名称；留空则不限制产品。
           EOF
 
           gh release create "$release_tag" dist/experience-engine.zip \

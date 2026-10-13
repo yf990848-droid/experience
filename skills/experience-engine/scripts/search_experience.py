@@ -1,15 +1,15 @@
 """
 检索经验脚本
-用法: python search_experience.py <query> [scene_id] --product-name <product_name>
+用法: python search_experience.py <query> [scene_id] [--product-name <product_name>]
 
 必填参数:
   query           检索关键词（空格分隔的关键词/短语）
-  --product-name  产品名称（从场景 reference 中读取）
 
 可选参数:
-  scene_id   场景ID
+  scene_id        场景ID
+  --product-name  产品名称（从场景 reference 中读取，默认不限制产品）
 
-调用人工号通过 getpass.getuser() 自动获取，默认检索同产品下各用户的经验。
+调用人工号通过 getpass.getuser() 自动获取，默认检索同场景下各用户的经验。
 """
 
 import argparse
@@ -29,14 +29,11 @@ SCORE_THRESHOLD = 0.3
 def search_experience(query: str, scene_id: str = "", user_id: str = "", *,
                       product_name: str = "") -> dict:
     scene_id = (scene_id or DEFAULT_SCENE_ID).strip()
-    product_name = product_name.strip()
+    product_name = (product_name or "").strip()
     user_id = user_id.strip()
 
     if not scene_id:
         return {"code": 400, "msg": "scene_id 未提供，请在对应场景的 reference 中配置 scene_id", "data": None}
-
-    if not product_name:
-        return {"code": 400, "msg": "product_name 未提供，请在对应场景的 reference 中配置产品名称", "data": None}
 
     try:
         caller_id = getpass.getuser().strip()
@@ -47,13 +44,14 @@ def search_experience(query: str, scene_id: str = "", user_id: str = "", *,
 
     payload = {
         "scene_id": scene_id,
-        "product": {"product_name": product_name},
         "caller_id": caller_id,
         "query": query,
         "search_field": SEARCH_FIELD,
         "top_k": TOP_K,
         "score_threshold": SCORE_THRESHOLD,
     }
+    if product_name:
+        payload["product"] = {"product_name": product_name}
     if user_id:
         payload["user_id"] = user_id
 
@@ -82,7 +80,7 @@ def print_search_input(query: str, scene_id: str, product_name: str):
     print("【经验检索输入】")
     print(f"query: {query}")
     print(f"scene_id: {scene_id}")
-    print(f"product_name: {product_name}")
+    print(f"product_name: {product_name or '不限制产品'}")
     print(f"score_threshold: {SCORE_THRESHOLD}")
     print(f"top_k: {TOP_K}")
     print("=" * 60)
@@ -129,10 +127,10 @@ def print_search_result(result: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="按场景和产品名称检索历史经验，调用人工号自动获取")
+    parser = argparse.ArgumentParser(description="按场景检索历史经验，产品名称过滤可选，调用人工号自动获取")
     parser.add_argument("query", help="检索关键词，空格分隔的关键词/短语")
     parser.add_argument("scene_id", nargs="?", default="", help="场景ID，从场景 reference 中读取")
-    parser.add_argument("--product-name", required=True, help="产品名称，从场景 reference 中读取")
+    parser.add_argument("--product-name", default="", help="产品名称，从场景 reference 中读取，默认不限制产品")
     args = parser.parse_args()
 
     query = args.query
