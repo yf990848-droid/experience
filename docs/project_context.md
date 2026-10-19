@@ -1,7 +1,7 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-09-17  
-维护分支：`develop`；发布分支：`main`
+更新时间：2026-10-19  
+维护分支：`develop`；服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。
 
 ## 1. 背景与目标
 
@@ -163,16 +163,103 @@
 - ES 按固定 `doc_id` 查询返回 404 表示此前不存在该经验，新建前出现属于正常现象；模型输出不完整时记录具体错误，已完成的结果可重试复用。
 - 2026-09-17 一次 CodeCheck 任务因同项目版本级检查同时运行而未能创建（`CC.10010253.400`），后续报告缺失是连带结果；该日志没有给出源码检查结论。需在占用任务结束后复验流水线。
 
-## 8. 后续跟踪
+## 8. experience-engine skill
+
+### 8.1 已确认并实现的行为
+
+skill 位于 `skills/experience-engine/`，供 Agent 在失败分析和修复过程中检索历史经验。已删除 skill 的存入能力及 `scripts/save_experience.py`，仅保留检索；服务端经验提取、新建、覆盖和删除流程仍按前述规则运行。
+
+| 文件 | 作用 |
+| --- | --- |
+| `skills/experience-engine/SKILL.md` | 通用调用协议、配置读取流程和输出要求 |
+| `skills/experience-engine/references/experience-guide-testdebug.md` | 测试脚本调测场景、可选产品名称、检索时机和关键词来源 |
+| `skills/experience-engine/scripts/search_experience.py` | 构造检索请求、自动获取调用人工号、打印结果 |
+
+配置与请求规则：
+
+- 场景配置为 `scene_id=421`；当前脚本的默认场景为空，实际调用必须从 reference 读取并传入场景，否则报错。
+- 产品使用名称 `product_name`，不使用产品 ID；reference 默认配置为 `""`，表示不限制产品。
+- 产品名称未配置、未传、为空字符串或仅含空格时，省略 CLI 的 `--product-name`；脚本也会归一化空值，并省略请求中的整个 `product` 字段。
+- 产品名称非空时，使用经验库中实际存储的完整名称，传入 `--product-name`；请求字段为 `product.product_name`。这不改变服务端入库时保存 `groupId/groupName` 的规则。
+- 本次需求最终确认为“产品可选”，未新增产品版本参数或配置。
+- 调用人工号通过 `getpass.getuser()` 自动获取并填入 `caller_id`，无需手工传参；获取失败或为空时报错。运行环境的用户名应为实际工号。
+- 默认不附加 `user_id`，检索同场景下各用户的经验；Python 函数保留显式 `user_id` 参数供兼容调用，CLI 不暴露该参数。
+
+脚本调用 `POST https://fuyao.rnd.huawei.com/memory/experience/doc/search`，使用 `search_field=rag_search_text`、`top_k=5`、`score_threshold=0.3`，请求超时 30 秒。脚本使用 Python 标准库，不需要安装服务端依赖。
+
+reference 是 Agent 读取的业务配置，**脚本不会自动解析 Markdown reference**。Agent 读取后组装参数；手工运行脚本时，需要自行传入场景和可选产品名称。
+
+测试脚本调测场景要求进入 Step 2 失败原因分析时先检索；Step 4 修复验证出现不同的新报错时重新检索。关键词来自核心 ERROR 日志、脚本文件名、相关类名/函数名/模块名。结合 Error Log、Root Cause 和 Pattern 判断适用性，采用 Diff 前核实当前版本。
+
+输出必须原样保留【经验检索输入】【经验检索返回】【原始返回 JSON】三段。返回 `code=200` 时退出码为 0，否则为 1；不得编造或改写召回结果。
+
+### 8.2 自动发布开发包
+
+流水线为 `.github/workflows/publish-experience-engine.yml`：
+
+- 每次 push 到 `develop` 都触发，无路径过滤；仅更新文档也会触发。
+- 对触发提交中的 `skills/experience-engine` 执行 `git archive`，产物为 `experience-engine.zip`，解压根目录为 `experience-engine/`。
+- 打包范围仅为该 skill 的已提交文件，不包含服务端代码。
+- 每次创建独立 GitHub prerelease，标签格式为 `experience-engine-develop-<run_number>.<run_attempt>`，保留历史版本，不标记为正式 Latest。
+- 从 [Releases](https://github.com/yf990848-droid/experience/releases) 下载所需版本的 ZIP；解压至项目 `.opencode/skills/`，得到 `.opencode/skills/experience-engine/SKILL.md`。
+
+本轮对话中已确认成功的发布为 [experience-engine-develop-2.1](https://github.com/yf990848-droid/experience/releases/tag/experience-engine-develop-2.1)，对应提交 `6343876f1c09cf85fe3b61221daa42fccaad23f0`，包含产品可选行为。此处是已验证版本记录，不代表后续最新版本。
+
+### 8.3 本地验证方法与状态
+
+在可访问上述内网接口的电脑上，以 Windows PowerShell 为例，从安装 skill 的项目根目录执行：
+
+```powershell
+python --version
+python -c "import getpass; print(getpass.getuser())"
+
+$experienceSearch = ".opencode\skills\experience-engine\scripts\search_experience.py"
+$experienceQuery = "替换成已入库经验中的实际错误关键词"
+
+# 不传产品
+python $experienceSearch $experienceQuery "421"
+$LASTEXITCODE
+
+# 空字符串，使用等号写法避免 PowerShell 丢弃空参数
+python $experienceSearch $experienceQuery "421" --product-name=
+$LASTEXITCODE
+
+# 纯空格
+python $experienceSearch $experienceQuery "421" --product-name "   "
+$LASTEXITCODE
+
+# 指定经验库中实际存储的产品名称
+python $experienceSearch $experienceQuery "421" --product-name "实际产品名称"
+$LASTEXITCODE
+```
+
+检查自动获取的用户名是否为实际工号。前 3 种产品输入应显示“不限制产品”，第 4 种应显示指定名称。检查三段输出是否完整、原始 JSON 的 `code` 是否为 200、退出码是否为 0；指定产品时，结合原始返回数据或已知经验核对产品范围。`code=200` 且结果为空仅说明请求成功，召回效果需使用已知入库经验验证。
+
+Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使用 experience-engine，按测试脚本调测 reference 检索历史经验，关键词为实际错误关键词，展示实际调用命令和脚本三段输出，本次只验证检索”。检查其读取 reference、传入场景、未附加产品参数，并实际执行脚本。随后填写真实产品名称重试，检查命令是否追加 `--product-name`。
+
+此前已完成模拟网络请求下的产品未传、空字符串、纯空格和指定名称验证，以及函数缺省/None 输入、场景缺失提示、原始结果保留、skill 格式和差异检查；开发包发布流水线已成功执行。**本次对话尚未收到用户本地验证结果，skill 的真实内网接口连通性及 Agent 端到端调用仍待验证**；前述服务端试运行记录不能替代这些验证。
+
+### 8.4 相关提交
+
+- `0b457b724086f0e72803ce2b9b601f62cc6fdb44`：skill 改为仅检索，按产品名称配置，自动获取调用人工号。
+- `87cd5181db7ad96c815da480bcca83cbf134d458`：增加 develop 自动发布 skill ZIP 的流水线。
+- `6343876f1c09cf85fe3b61221daa42fccaad23f0`：产品名称改为选填，空值省略整个 product 字段，同步 skill、reference 和发布说明。
+
+## 9. 后续跟踪
 
 1. 核实正式服务持续运行时的每日增量、积压续跑和历史失败重试；单轮 `--once --max-pages 1` 可用于定位，不会启动其他定时任务。
 2. 另行处理既有坏数据及模型输出失败记录；避免为排障清空或覆盖已有经验引用。
 3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
 4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
-## 9. 关键文档
+5. 完成 experience-engine 的内网脚本验证和 Agent 端到端验证，记录实际返回及产品过滤结果。
+
+## 10. 关键文档
 
 - [调测轨迹经验提取设计文档](./调测轨迹经验提取设计文档.md)
 - [调测轨迹经验提取最简方案](./调测轨迹经验提取最简方案.md)
 - [调测轨迹经验提取最简实现方案](./调测轨迹经验提取最简实现方案.md)
 - [经验管理 API 文档](./经验管理%20API%20文档.md)
+- [experience-engine 使用说明](../skills/experience-engine/SKILL.md)
+- [测试脚本调测检索配置](../skills/experience-engine/references/experience-guide-testdebug.md)
+- [skill 开发包发布流水线](../.github/workflows/publish-experience-engine.yml)
