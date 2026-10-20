@@ -1,0 +1,61 @@
+name: Publish experience-engine skill
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout the triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build experience-engine ZIP
+        run: |
+          set -euo pipefail
+          test -f skills/experience-engine/SKILL.md
+          mkdir -p dist
+          git archive --format=zip --prefix=experience-engine/ \
+            --output=dist/experience-engine.zip HEAD:skills/experience-engine
+          python3 -m zipfile -t dist/experience-engine.zip
+
+      - name: Publish development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_tag="experience-engine-develop-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          cat > dist/release-notes.md <<EOF
+          experience-engine 开发版，来自 develop 分支。
+
+          - 提交：${GITHUB_SHA}
+          - 打包范围：skills/experience-engine
+          - 下载文件：experience-engine.zip
+          - 解压后目录：experience-engine/，可放入项目的 .opencode/skills/ 下。
+          - 可在 references/experience-guide-testdebug.md 中配置产品名称；留空则不限制产品。
+          EOF
+
+          gh release create "$release_tag" dist/experience-engine.zip \
+            --target "$GITHUB_SHA" \
+            --title "experience-engine develop ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --notes-file dist/release-notes.md \
+            --prerelease \
+            --latest=false
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          已发布 [experience-engine 开发版](https://github.com/${GH_REPO}/releases/tag/${release_tag})。
+
+          [下载 experience-engine.zip](https://github.com/${GH_REPO}/releases/download/${release_tag}/experience-engine.zip)
+          EOF
