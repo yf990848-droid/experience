@@ -1,7 +1,7 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-19  
-维护分支：`develop`；服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。
+更新时间：2026-10-20  
+GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
 
@@ -113,7 +113,9 @@
 | `test/experience/test_trace_experience_pipeline.py`、`test/experience/test_trace_experience_api_compat.py` | 离线行为和原 API 兼容测试 |
 | `docs/调测轨迹经验提取设计文档.md` | 详细设计 |
 
-正式配置位于 `TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT']`：`enabled=True`，任务名 `trace_experience_prod_20260501`，北京时间从 `2026-05-01 00:00:00` 开始、结束时间为空；每天增量运行一次。仍有历史积压时，一轮完成后最多等待 60 秒继续有界处理；本服务按单实例运行。
+正式配置位于 `TASK_RUNNER_CONFIG['TRACE_EXPERIENCE_EXTRACT']`。本轮核查的 GitHub `develop` 仍为旧任务名 `trace_experience_prod_20260501`、起点 `2026-05-01 00:00:00`；2026-10-20 用户已在内网 CodeHub 仓库修改为新任务名和 9 月 13 日起点并反馈已部署，详见 7.2。本次 GitHub 更新仅同步上下文，不代表 GitHub 配置代码已同步。
+
+调测经验任务仅在 `env=prod` 且 `enabled=True` 时注册。运行 `task_runner.py` 的进程启动后立即执行首轮；有积压时每轮结束后最多等待 60 秒继续，无积压时等待 24 小时再执行，整轮异常时按正常周期等待重试。它不是固定夜间任务，代码中固定时刻执行的是另一项 code-agent 流水线。本服务按单实例运行；仅更新 API 服务不等于调度进程已启动。
 
 每页增量 10 条、每轮最多 100 页；每轮先重试最多 10 条待处理或失败轨迹。模型上下文预算 50000 token，最多输出 10240 token，模型输入排除 `errorCause`。正式配置按既定要求使用 `verify_tls=False`。任务的 SQL 表已使用 `--init-tables` 初始化。
 
@@ -158,10 +160,50 @@
 ## 7. 验证与已知现象
 
 - 已用正式环境连接初始化 GaussDB 状态表，并验证上游分页、模型调用和 ES 写入。试运行曾处理 1000 条新发现轨迹：`completed=997`、`failed=3`、`created=28`、`updated=4`、`deleted=3`、`skipped=3`；这是试运行记录，不代表发布后的统计。
-- 另一次单轮结果为 `discovered=3`、`completed=1`、`failed=2`、`has_more=True`；失败对应历史数据的 `JSONDecodeError`、`TypeError`，已决定暂不清理旧数据。`has_more=True` 表示还有增量页待处理。
+- 另一次单轮结果为 `discovered=3`、`completed=1`、`failed=2`、`has_more=True`；失败对应历史数据的 `JSONDecodeError`、`TypeError`，当时决定暂不清理上游旧数据（2026-10-20 的 ES 经验清理另见 7.2）。`has_more=True` 表示还有增量页待处理。
 - 本地针对 `test_trace_experience_pipeline.py` 的离线测试已通过；测试使用模拟接口、模型、ES 和 SQLite，不代替生产环境连接验证。测试桩已覆盖模型重试窗口，验证部分批次失败时保留先前完成的修复。
 - ES 按固定 `doc_id` 查询返回 404 表示此前不存在该经验，新建前出现属于正常现象；模型输出不完整时记录具体错误，已完成的结果可重试复用。
 - 2026-09-17 一次 CodeCheck 任务因同项目版本级检查同时运行而未能创建（`CC.10010253.400`），后续报告缺失是连带结果；该日志没有给出源码检查结论。需在占用任务结束后复验流水线。
+
+
+### 7.1 原始 Diff 异常与数据起点决定（2026-10-19～20）
+
+- 样本为 `caseId=I_20_Test_Env`、原始 `testUser="no user"`、`groupId=1058`、修复 Step `1541157`，`updateTime=2026-09-12 13:07:13`。其已入库经验描述通过增加 `Gpd_AddService` 修复订阅服务不存在错误。
+- 用户查询上游原始响应，确认 `diffContent.changedLines` 从编码声明、导入、类定义到整份脚本均为新增，与经验中的 Diff 一致；`hasChanged=true`、`fixResult=success`、顶层 `executeResult=PASS`。这确认全新增来自上游，尚不能仅凭全新增证明比较基线错误或确定真实修改动作；上游基线原因未在本轮给出最终结论。
+- 完整轨迹接口首屏较早（该组合当时共 1783 条），改用增量接口定位：`listByUpdateTimeAndId` 请求 `{"updateTime":"2026-09-12 13:07:12","id":0,"pageNum":1,"pageSize":10}`，成功取得目标 Step。后续翻页沿用最后一条的 `updateTime + id`，保持 `pageNum=1`；完整轨迹查询的用户参数仍须使用原始 `"no user"`，不是入库用户 `"0"`。
+- 因 9 月 12 日当天也存在上述样本，用户最终决定从北京时间 **2026-09-13 00:00:00** 起重新提取。这是本轮确定的数据范围，不代表已全面验证 9 月 13 日之后所有 Diff。
+- 用户确认上游补齐的是此前为 null 的 **`groupName`**，且补名称没有改变旧记录的 `updateTime`。现有映射直接写入 `product.product_name`，不需新增字段处理。`groupId` 保存在 `product.product_id` 和 `metadata.group_id`；`product.pdu_name` 则在入库时按用户查询补齐，与 `groupName` 无关。
+- 当前范围判定依据 Step 的 `updateTime`，不是执行 `startTime` 或经验入库时间。起点之前的 Step 不作为本次新增经验修复点，但仍可能作为前置上下文读取。
+
+### 7.2 旧经验清理、重建配置与部署状态（2026-10-20）
+
+用户本地目录为 `D:\agent-memory\AgentMemory`，使用项目虚拟环境和 PowerShell 操作；本轮是用户在内网执行，助手依据回传输出核验。
+
+**已完成的备份与删除：**
+
+- 正式 ES 索引：`prod_unified_experience_index_v4`；测试索引：`unified_experience_index_v4`。
+- 线上 Mapping 已确认：`scene_id` 为 keyword；`metadata.source` 为 text，精确匹配使用 `metadata.source.keyword`。
+- 删除范围为 `scene_id="421"` 且 `metadata.source.keyword="trace_experience"` 的全部当前经验，不加日期限制，不清空整个索引。
+- 查询匹配 179 条。完整备份包含 `_index`、`_id`、`_source`（含向量），文件为 `D:\agent-memory\AgentMemory\backups\trace_experience_20261020_111113.jsonl`，回传 `BACKUP_OK / COUNT: 179`。
+- 按备份 ID 删除前，逐条核验当前正文与备份一致；删除携带 `if_seq_no + if_primary_term` 防止并发修改后误删。刷新后回传 **`DELETED: 179 / ALREADY_MISSING: 0 / REMAINING: 0`**，确认当时该范围当前经验已清空。
+- 本次直接删除 ES 文档，未调用业务删除接口，因此没有新增删除归档；既有历史归档不在本次清理范围。SQL 的 `trace_experience_job_state` 和 `trace_experience_record` 按方案保留。
+- 本地首次查询默认加载测试索引且 ES 返回 401；当前 PowerShell 设置 `env=prod` 和用户提供的 `CRE_KEY` 后查询成功。仅记录环境变量名称，不记录密钥值。经验连接来自 `get_es_client() -> AI_test_es_client`；切换 env 会切换索引，不会自动切换该连接的固定凭据。
+- 未收到单独停用旧任务的确认；删除后剩余 0 是当时结果，后续仍需确认旧实例已被替换，避免旧任务再次写入。
+
+**重建配置与部署：**
+
+内网远端为 `https://codehub-dg-y.huawei.com/CoreTool/CoreAI/Data/AgentMemory.git`，主分支 `master`。指导从最新 `origin/master` 新建 `personal/c00959281/trace-experience-rebuild-0913`，仅修改 `project_configs/settings.py` 两项：
+
+```python
+'job_name': 'trace_experience_prod_20260913_rebuild_20261020',
+'range_start': '2026-09-13 00:00:00',
+```
+
+`enabled=True`、`range_end=None` 及提取逻辑保持不变。用户贴出的 diff 确认为这两项修改，`git diff --check` 无输出；随后用户反馈已部署，未提供内网 MR 编号或提交 SHA。
+
+更换任务名会建立独立 SQL 游标和处理记录，避免沿用旧游标或已完成缓存；原任务名直接修改时间范围会报 `range_changed`。仅删除 ES 后重启旧任务不能保证重新生成。重建仍沿用固定 doc_id 规则，任务名不参与经验 ID 计算。
+
+**当前状态：179 条旧经验已备份并删除，用户已反馈新配置部署完成；尚未收到新任务首轮日志或新经验抽查结果，不能认定已开始执行或重建成功。** 下一步检查 `listByUpdateTimeAndId` 请求、`trace experience summary=` 汇总及 `[TASK] 调测经验提取失败`，并核实调度进程、实际新任务名、补齐的产品名称及 Diff。
 
 ## 8. experience-engine skill
 
@@ -247,8 +289,8 @@ Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使
 
 ## 9. 后续跟踪
 
-1. 核实正式服务持续运行时的每日增量、积压续跑和历史失败重试；单轮 `--once --max-pages 1` 可用于定位，不会启动其他定时任务。
-2. 另行处理既有坏数据及模型输出失败记录；避免为排障清空或覆盖已有经验引用。
+1. 优先核实 2026-10-20 部署的新任务是否已启动，取得首轮汇总（created/updated/failed/has_more），抽查新经验的 `product.product_name`、原始 Diff 和修复点时间；确认旧任务不再运行。之后跟踪每日增量、积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
+2. 继续核实上游 Diff 基线问题及 9 月 13 日之后数据质量；本轮仅清理了 7.2 所述 ES 当前经验，旧 SQL 状态与上游坏数据未清理。另行跟踪模型输出失败记录。
 3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
 4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
