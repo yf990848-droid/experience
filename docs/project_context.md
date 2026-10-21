@@ -145,7 +145,7 @@ GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开
 
 ### 6.1 `trace_experience_job_state`
 
-记录整个任务读到哪里，核心字段是 `last_update_time + last_id`。服务重启后从该位置继续读取。
+记录增量扫描的位置，核心字段是 `last_update_time + last_id`。服务重启后从该位置继续读取。该游标不是所有经验已处理完成的日期，也不是已生成经验所关联 Step 的最大更新时间。每页先保存发现的轨迹及游标，再逐条处理该页关联的完整轨迹，处理结束后才读取下一页。
 
 ### 6.2 `trace_experience_record`
 
@@ -205,7 +205,7 @@ GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开
 
 更换任务名会建立独立 SQL 游标和处理记录，避免沿用旧游标或已完成缓存；原任务名直接修改时间范围会报 `range_changed`。仅删除 ES 后重启旧任务不能保证重新生成。重建仍沿用固定 doc_id 规则，任务名不参与经验 ID 计算。
 
-**当前状态：179 条旧经验已备份并删除，用户已反馈新配置部署完成；尚未收到新任务首轮日志或新经验抽查结果，不能认定已开始执行或重建成功。** 下一步检查 `listByUpdateTimeAndId` 请求、`trace experience summary=` 汇总及 `[TASK] 调测经验提取失败`，并核实调度进程、实际新任务名、补齐的产品名称及 Diff。
+**截至 2026-10-20 的状态：179 条旧经验已备份并删除，用户已反馈新配置部署完成；当时尚未收到新任务首轮日志或新经验抽查结果。2026-10-21 用户已回报游标推进及可见经验，详见 7.4；仍不能认定重建全部完成。** 下一步检查 `listByUpdateTimeAndId` 请求、`trace experience summary=` 汇总及 `[TASK] 调测经验提取失败`，并核实调度进程、实际新任务名、补齐的产品名称及 Diff。
 
 ### 7.3 重跑后旧经验缺失排查（2026-10-21）
 
@@ -237,7 +237,45 @@ GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开
 
 本轮源码核查还确认：`experience_refs` 的 `action=put, done=true` 表示写入流程已完成；`keep` 表示模型判断证据不足，原因保存在 `reason`，不会新建经验；`delete` 可表示模型判断修改与故障无关。由 `fixResult=fail/FAIL` 触发的直接删除不新增对应删除引用，不能仅凭 refs 排除这一分支。证据不足本身不会自动将轨迹标成失败重试；旧经验清空后，`keep` 也没有旧文档可保留。
 
-**待核实：尚未收到本样本的新任务 SQL 记录、任务游标、当前上游 Step 或正式 ES 精确查询结果，因此不能认定该轨迹已经跑过，也未完成生产现状的最终归因。** 本轮未恢复旧经验、未补跑、未修改提取代码或重跑时间范围。
+**待核实：尚未收到本样本的新任务 SQL 记录、当前上游 Step 或正式 ES 精确查询结果（任务级游标的后续反馈见 7.4），因此不能认定该轨迹已经跑过，也未完成生产现状的最终归因。** 本轮未恢复旧经验、未补跑、未修改提取代码或重跑时间范围。
+
+### 7.4 游标日期、完成判定与后续增量运行（2026-10-21）
+
+**用户反馈：** 按新任务名查询后，`cursor_time_beijing=2026-09-13 04:51:14`；同时已看到关联轨迹更新时间为 `2026-10-16 16:27:15` 的经验。尚未提供完整 SQL 行、该经验原始文档或最新一轮汇总，因此记录为用户观测，不据此认定全部重建完成或确定该经验的具体处理路径。
+
+**源码确认的解释：**
+
+- `Pipeline.run()` 通过增量接口按 `updateTime + id` 扫描，发现需要处理的 `caseId + testUser`；SQL 游标只记录这一步的位置。
+- `Pipeline.process()` 随后调用 `StepClient.history()`，分页读取该组合的全部历史 Step。有效修复点按配置的 `range_start/range_end` 筛选，不以当前增量游标作为上限。
+- 本次起点为 9 月 13 日，`range_end=None`。因此，扫描到某组合在 9 月 13 日的 Step 时，可以同时读取并提取该组合 10 月 16 日的有效修复；两种日期可以同时成立，不能以已有经验的最大日期判断整体进度。
+- `TraceStateStore.discover()` 先保存该页发现的轨迹及游标，随后逐条处理完整轨迹，再扫描下一页。长轨迹、历史分页或模型耗时会使游标暂时不动；仅凭一次查询不能判定卡住。
+
+**生产 GaussDB 查看方法（SQL 保存 UTC，展示北京时间加 8 小时）：**
+
+```sql
+SELECT
+    job_name,
+    last_update_time AS cursor_time_utc,
+    last_update_time + INTERVAL '8 hours' AS cursor_time_beijing,
+    last_id,
+    updated_at + INTERVAL '8 hours' AS state_updated_beijing
+FROM trace_experience_job_state
+WHERE job_name = 'trace_experience_prod_20260913_rebuild_20261020';
+
+SELECT process_status, COUNT(*) AS record_count
+FROM trace_experience_record
+WHERE job_name = 'trace_experience_prod_20260913_rebuild_20261020'
+GROUP BY process_status;
+```
+
+- 隔几分钟比较 `cursor_time_beijing`、`last_id` 和 `state_updated_beijing`，结合运行日志判断是否持续推进。
+- 查看对应任务最新一轮 `trace experience summary=`：`has_more=True` 表示仍有增量积压；当前无结束时间限制时，`has_more=False` 表示本轮已读到上游当时末尾。
+- 再检查任务级 `pending/failed`：分别为待处理和失败待重试；`done` 只表示轨迹处理完成，不保证生成经验。
+- 最新一轮 `has_more=False` 且无 `pending/failed`，才可表述为“截至该轮检查已追平并处理完成”；游标推进本身不代表此前轨迹全部成功。当前尚无这些完整结果，不能宣布跑完。
+
+**后续自动增量：** 历史追平后无需切换配置，继续从保存的 `updateTime + id` 扫描新增或更新的 Step，发现变化后重新读取对应组合的完整历史并同步经验；服务重启也沿用原游标。有积压时每轮结束后最多等待 60 秒继续，无积压时等待 24 小时再检查，每轮按现有机制重试待处理或失败轨迹。保持当前 `job_name`、时间范围配置（`range_end=None`）和调度进程持续运行即可。未改变上游 `updateTime` 的字段补齐不会仅凭增量扫描自动被发现，仍适用 7.1 的说明。
+
+本轮仅确认运行机制和查看方法，未修改代码、配置、游标，未执行补跑。
 
 ## 8. experience-engine skill
 
@@ -323,7 +361,7 @@ Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使
 
 ## 9. 后续跟踪
 
-1. 优先核实 2026-10-20 部署的新任务是否已启动，取得首轮汇总（created/updated/failed/has_more），抽查新经验的 `product.product_name`、原始 Diff 和修复点时间；确认旧任务不再运行。之后跟踪每日增量、积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
+1. 根据 7.4 已回报的游标位置持续检查新任务推进，取得最新汇总（created/updated/failed/has_more）及 pending/failed 数量，确认是否追平；抽查新经验的 `product.product_name`、原始 Diff 和修复点时间，确认旧任务不再运行。追平后沿用当前任务自动增量，跟踪积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
 2. 继续核实上游 Diff 基线问题及 9 月 13 日之后数据质量；本轮仅清理了 7.2 所述 ES 当前经验，旧 SQL 状态与上游坏数据未清理。另行跟踪模型输出失败记录。
 3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
 4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
