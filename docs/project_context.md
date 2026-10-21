@@ -1,6 +1,6 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-20  
+更新时间：2026-10-21  
 GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
@@ -135,7 +135,9 @@ GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开
 - 固定 `doc_id` 已存在且内容变化：归档旧版本并覆盖；
 - 固定 `doc_id` 已存在且内容相同：跳过；
 - `fixResult` 明确变为 `fail/FAIL`，或模型合法返回 `valid=false、reason_code=unrelated`：删除本任务创建的对应经验；
-- 模型请求失败、格式错误、证据不足或结果未知：保留已有经验并等待重试。
+- 模型请求失败或格式错误：保留已有经验，轨迹标记失败后等待重试。
+- 模型合法返回证据不足（`reason_code=insufficient_evidence`）：保存 `action=keep` 及原因，保留已有经验但不新建；本身不触发失败重试，轨迹可标记 `done`。
+- 修复结果未知：不作为有效修复点提取，也不因未知结果主动删除已有经验；本身不触发失败重试。
 
 失败现象用于经验标题、正文和检索，不参与 `doc_id` 计算，也不用于覆盖其他轨迹的经验。
 
@@ -204,6 +206,38 @@ GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开
 更换任务名会建立独立 SQL 游标和处理记录，避免沿用旧游标或已完成缓存；原任务名直接修改时间范围会报 `range_changed`。仅删除 ES 后重启旧任务不能保证重新生成。重建仍沿用固定 doc_id 规则，任务名不参与经验 ID 计算。
 
 **当前状态：179 条旧经验已备份并删除，用户已反馈新配置部署完成；尚未收到新任务首轮日志或新经验抽查结果，不能认定已开始执行或重建成功。** 下一步检查 `listByUpdateTimeAndId` 请求、`trace experience summary=` 汇总及 `[TASK] 调测经验提取失败`，并核实调度进程、实际新任务名、补齐的产品名称及 Diff。
+
+### 7.3 重跑后旧经验缺失排查（2026-10-21）
+
+用户反馈此前能从“9 月 21 日的 Network_SCP_SbiHttps_08_05”得到一条经验，重跑后查不到。已在本地删除前的 JSONL 备份中按用例名称匹配，用户回传结果确认：
+
+| 项目 | 备份中的值 |
+| --- | --- |
+| 用例 | `Network_SCP_SbiHttps_08_05` |
+| 经验 ID | `tracefix_3d7be5895714ac0556ec0ff2cbcc978499ca58f9d39ddca0` |
+| 标题／失败现象 | DISCNFPROFILE 配置添加因参数无效失败 |
+| 原始调测用户 | `no user`（入库 `user_id="0"`） |
+| 产品 ID／group_id | `1058` |
+| 修复 Step | `1327580` |
+| 关联 Step | `1282366`、`1327580` |
+| 修复标记 | `success` |
+| 修复 Step 更新时间 | **2026-09-06 16:04:17（北京时间）** |
+
+旧经验记录的失败为 `ADD DISCNFPROFILE` 返回 `retcode 360041`、参数无效；Diff 为 chf1 和 chf2 的 `nfServices[0]` 增加 `scheme='https'`，另有合入类型注释变化。上述内容来自旧经验备份，本轮尚未取得当前上游原始 Step 进行复核。
+
+**当前判断：备份中的修复时间早于本次重跑起点 2026-09-13。若上游 Step 1327580 的 updateTime 仍为 9 月 6 日，该修复点会被时间范围筛掉，不会重新生成经验；即使完整轨迹已读取到它也一样。** 本次是先删除全部旧经验、再按缩小后的范围重建，因此不能期待全部 179 条恢复。用户所说“9 月 21 日”的含义未确认，不能当成该修复点的更新时间，也不能断言是经验入库日期。
+
+排查路径与判定：
+
+1. 从 7.2 的本地备份按用例名称搜索，提取 `_id`、`metadata.fix_step_id`、`metadata.group_id` 和正文中的原始调测用户；已完成本样本定位。
+2. 查询 `trace_experience_record` 中该 `case_id` 的所有任务记录，对比旧任务与 `trace_experience_prod_20260913_rebuild_20261020`；查看 `source_test_user_json`、`process_status`、`retry_count`、`last_error` 和 `experience_refs`。没有新任务记录只说明尚未发现该轨迹，需结合游标判断；`done` 不等于生成了经验。
+3. 查询新任务的 `trace_experience_job_state.last_update_time + last_id`。SQL 时间按 UTC 保存，对照上游北京时间需加 8 小时；游标推进不代表此前所有轨迹均处理成功。
+4. 调用完整轨迹接口 `listByCaseIdAndTestUser`，请求 `{"caseId":"Network_SCP_SbiHttps_08_05","testUser":"no user","pageNum":1,"pageSize":10}`，逐页到 `hasNextPage=false`，定位 `id=1327580`。核查当前 `updateTime`、`fixResult`、解析后的 `diffContent.hasChanged/changedLines`、`groupId` 及同产品前置上下文。不能用入库用户 `"0"` 代替原始 `"no user"`。
+5. 按旧 `doc_id` 精确查询正式 ES，区分文档确实不存在和检索未召回；若 `groupId` 变化，固定经验 ID 也会变化。
+
+本轮源码核查还确认：`experience_refs` 的 `action=put, done=true` 表示写入流程已完成；`keep` 表示模型判断证据不足，原因保存在 `reason`，不会新建经验；`delete` 可表示模型判断修改与故障无关。由 `fixResult=fail/FAIL` 触发的直接删除不新增对应删除引用，不能仅凭 refs 排除这一分支。证据不足本身不会自动将轨迹标成失败重试；旧经验清空后，`keep` 也没有旧文档可保留。
+
+**待核实：尚未收到本样本的新任务 SQL 记录、任务游标、当前上游 Step 或正式 ES 精确查询结果，因此不能认定该轨迹已经跑过，也未完成生产现状的最终归因。** 本轮未恢复旧经验、未补跑、未修改提取代码或重跑时间范围。
 
 ## 8. experience-engine skill
 
@@ -295,6 +329,8 @@ Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使
 4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
 5. 完成 experience-engine 的内网脚本验证和 Agent 端到端验证，记录实际返回及产品过滤结果。
+
+6. 跟进 7.3 的旧经验缺失样本：核实 Step `1327580` 当前更新时间及新任务处理记录，区分范围过滤、尚未处理、处理失败和检索未召回；目前仅确认备份中的修复时间为 9 月 6 日，未授权恢复或扩大重跑范围。
 
 ## 10. 关键文档
 
