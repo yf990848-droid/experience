@@ -8,7 +8,7 @@ UPCF_evaluation_experiences_23.jsonl 完整路径；不能填原始 30 条 ES �
 {
   "repository_root": "D:\\UPCFTestcases",
   "cases_root": "D:\\UPCFTestcases\\Cases",
-  "experience_jsonl": "",
+  "experience_jsonl": "D:\\agent-memory\\AgentMemory\\exports\\UPCF_20261022_114414_275069\\evaluation_input_20261024_164907_030738\\UPCF_evaluation_experiences_23.jsonl",
   "output_root": "D:\\UPCF-evaluation-output",
   "expected_count": 23,
   "candidate_scope": "same_directory",
