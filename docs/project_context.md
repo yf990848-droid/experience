@@ -1,6 +1,6 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-21  
+更新时间：2026-10-24  
 GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
@@ -51,7 +51,7 @@ GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开
 
 经验使用五段式 Markdown：
 
-- `Debug Trace`：上次失败、本次修改、修改后结果，并保存真实 `testUser` 和来源 Step；
+- `Debug Trace`：上次失败、本次修改、修改后结果，并保存来源用例 `caseId`、真实 `testUser` 和来源 Step；用例编号以正文中的“来源用例：”行保存，未单独写入 ES metadata，详见 7.5；
 - `Error Log`：失败分类行和核心错误；
 - `Diff`：直接写入修复 Step 的原始 `diffContent.changedLines`，以 diff 代码块显示，不由模型改写；
 - `Root Cause`：根据日志和修改说明根因，区分事实和推断；
@@ -276,6 +276,50 @@ GROUP BY process_status;
 **后续自动增量：** 历史追平后无需切换配置，继续从保存的 `updateTime + id` 扫描新增或更新的 Step，发现变化后重新读取对应组合的完整历史并同步经验；服务重启也沿用原游标。有积压时每轮结束后最多等待 60 秒继续，无积压时等待 24 小时再检查，每轮按现有机制重试待处理或失败轨迹。保持当前 `job_name`、时间范围配置（`range_end=None`）和调度进程持续运行即可。未改变上游 `updateTime` 的字段补齐不会仅凭增量扫描自动被发现，仍适用 7.1 的说明。
 
 本轮仅确认运行机制和查看方法，未修改代码、配置、游标，未执行补跑。
+
+### 7.5 UPCF 经验导出及用例编号提取（2026-10-22，10-24 整理）
+
+本轮由用户在内网项目目录 `D:\agent-memory\AgentMemory` 的虚拟环境和 PowerShell 中执行，助手依据用户回传输出核验；未修改线上经验、SQL 状态或提取逻辑。
+
+**导出范围与结果：**
+
+- 正式索引 `prod_unified_experience_index_v4`，精确匹配 `product.product_name="UPCF"`；不限制场景、来源、用户、版本、时间或质量状态，只导出当前文档，不含已删除文档及覆盖前的历史版本。
+- 用户说明总量不超过 200 条，因此采用单次 `size=500、track_total_hits=True、_source=True` 查询，无需 Scroll。脚本核验查询未超时、无失败分片、命中总数精确且与取回数量一致。
+- 初次结果为 `EXPORT_OK / UPCF_TOTAL: 33 / EXCLUDED: 0 / EXPORTED: 33`，保存完整 JSONL（`_index、_id、_source`，含返回的向量）及 Markdown 阅读版。
+- 用户要求排除标题为“pco初始化失败”的经验。原先按完整标题、忽略英文大小写及首尾空格的过滤未命中；随后在本地 JSONL 中用 PowerShell 搜索 pco，确认以下三条标题均显示为“pco初始化失败”。未命中的原因尚未验证，PowerShell 向 Python 管道传递中文时的编码变化只是可能原因。
+- 最终按下列已确认 ID 从本地文件排除，保留原始导出文件，另生成过滤版。用户回传 **`EXPORT_OK / EXCLUDED: 3 / EXPORTED: 30`**，脚本已核验输出 30 条、ID 唯一及三个排除 ID 不在结果中。这里只过滤导出文件，线上三条经验未删除。
+
+排除的经验 ID：
+
+- `tracefix_007dfb21ebed4ed5da022fa5e5b188b5d477a1244628e3cc`
+- `tracefix_4eaee544cc4f81b7fe2ddc72d1745b8d73149bf68cc3434f`
+- `tracefix_e2045a978d6d4b4c68dcf320e95e217ec991b6ad6cece125`
+
+文件目录：`D:\agent-memory\AgentMemory\exports\UPCF_20261022_114414_275069\`
+
+| 文件 | 用途 |
+| --- | --- |
+| `UPCF_experiences.jsonl`、`UPCF_experiences.md` | 初始 33 条，保留原文件 |
+| `UPCF_experiences_filtered.jsonl` | 最终 30 条完整数据，后续提取以此为准 |
+| `UPCF_experiences_filtered.md` | 最终 30 条阅读版 |
+
+上述数量是 10 月 22 日查询时的已入库快照，不代表当前实时数量，也不能据此认定重建任务已追平。
+
+**线上 Mapping 与连接检查：**
+
+- 用户回传 Mapping 请求返回 200：`product.product_name`、`product.pdu_name`、`product.pdu_code`、`product.version_name` 均为 keyword。
+- `product.product_id` 为 text，带 `keyword` 子字段（`ignore_above=256`）；直接按产品 ID 精确查询应使用 `product.product_id.keyword`，共用过滤代码可通过已有 `EXPERIENCE_PRODUCT_ID_FIELD` 配置适配。本轮未修改该配置。
+- `title` 为 text，使用 `ik_max_word_analyzer` 和 `ik_smart_analyzer`，无 keyword 子字段；本次取回后在本地排除，避免对分词字段直接使用 term 判断完整标题。
+- 初次 Mapping 查询虽选对正式索引，但返回 401。指导在同一 PowerShell 窗口检查或重新设置有效 `CRE_KEY` 后，用户回传查询成功；未记录密钥，未进一步确认认证失败根因。Pydantic 与 HTTPS 警告不是该次 401 的直接诊断依据。
+
+**用例编号保存位置与提取：**
+
+- 核查 `memory_service/trace_experience_pipeline.py` 的 `build_body()`：代码把 `'来源用例：' + step['caseId']` 固定追加到经验正文的 Debug Trace 中，不依赖模型生成该来源行。
+- ES 的 `metadata` 未单独保存 `case_id`；用户回传样本元数据包含 source、group_id、fix_step_id、source_revision、failure_phenomenon、related_step_ids、payload_hash，没有用例编号。`fix_step_id` 是修复步骤 ID，不能当作用例编号。
+- `db_operate/trace_experience_store.py` 的 `discover()` 将上游用例编号独立保存到 SQL `trace_experience_record.case_id`。
+- 已给出从过滤版 JSONL 的 `_source.experience` 按 `(?m)^来源用例：[ \t]*([^\r\n]+)` 提取的 PowerShell 命令：每条经验对应一行，保留重复用例，匹配数不是 1 时输出经验 ID 供核查。30 条经验不等于 30 个不同用例。
+- 用户后续在 Excel 中处理 `1. Network_SCP_N5_01_04` 这类带序号的文本；公式报计算错误后，已指导按空格分列得到用例编号。未收到完整 30 行编号或唯一用例数，不记录为已核验的完整用例清单。本轮未新增 ES 用例编号字段。
+
 
 ## 8. experience-engine skill
 
