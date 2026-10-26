@@ -1,6 +1,6 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-24  
+更新时间：2026-10-26  
 GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
@@ -318,7 +318,7 @@ GROUP BY process_status;
 - ES 的 `metadata` 未单独保存 `case_id`；用户回传样本元数据包含 source、group_id、fix_step_id、source_revision、failure_phenomenon、related_step_ids、payload_hash，没有用例编号。`fix_step_id` 是修复步骤 ID，不能当作用例编号。
 - `db_operate/trace_experience_store.py` 的 `discover()` 将上游用例编号独立保存到 SQL `trace_experience_record.case_id`。
 - 已给出从过滤版 JSONL 的 `_source.experience` 按 `(?m)^来源用例：[ \t]*([^\r\n]+)` 提取的 PowerShell 命令：每条经验对应一行，保留重复用例，匹配数不是 1 时输出经验 ID 供核查。30 条经验不等于 30 个不同用例。
-- 用户后续在 Excel 中处理 `1. Network_SCP_N5_01_04` 这类带序号的文本；公式报计算错误后，已指导按空格分列得到用例编号。未收到完整 30 行编号或唯一用例数，不记录为已核验的完整用例清单。本轮未新增 ES 用例编号字段。
+- 用户后续在 Excel 中处理 `1. Network_SCP_N5_01_04` 这类带序号的文本；公式报计算错误后，已指导按空格分列得到用例编号。截至该轮尚未收到完整 30 行编号或唯一用例数；10 月 24 日已从仓库阅读版核实为 23 个不同来源，见 8.5。本轮未新增 ES 用例编号字段。
 
 
 ## 8. experience-engine skill
@@ -403,6 +403,130 @@ Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使
 - `87cd5181db7ad96c815da480bcca83cbf134d458`：增加 develop 自动发布 skill ZIP 的流水线。
 - `6343876f1c09cf85fe3b61221daa42fccaad23f0`：产品名称改为选填，空值省略整个 product 字段，同步 skill、reference 和发布说明。
 
+
+### 8.5 评测集目标、23 条经验选择及导出（2026-10-24）
+
+目标是在内网 UPCF 仓库中，参考历史失败经验，从来源用例同目录的其他用例注入同类错误，评测经验检索及 Agent 修复效果。仓库不能上传；由内网 Agent 执行生成。检索由 experience-engine 完成，修改脚本由调用它的 Agent 完成，两层能力应分别评价。
+
+核查 evaluation/UPCF_experiences_filtered.md：30 条经验实际对应 **23 个不同来源用例**，不是最初估计的 22 个。Network_SCP_N5_01_04 对应原序号 1/2/3；PCF_N23If_Msg_qosShortGuarantee_01_19 对应 7/8/14/19/20/30。用户确认每个来源用例选一条，保留原序号：
+
+**2、4、5、6、9、10、11、12、13、15、16、17、18、21、22、23、24、25、26、27、28、29、30**。
+
+删除的是评测输入中的其余 7 条，不删除线上经验。曾建议暂缓等待时间、SCP、NFDiscover、TAC 范围等证据较弱的样本，用户最终明确 **23 条全部尝试**，不再提前过滤。按来源去重不等于按故障机制去重，后续发现见 8.9。
+
+已提交 evaluation/prepare_upcf_evaluation.py（96172ff7839ddcc1447ce526754c2993172f7762）：
+- Python 3.9+，仅标准库；默认读取 D:\agent-memory\AgentMemory\exports\UPCF_20261022_114414_275069\UPCF_experiences_filtered.jsonl。
+- 按固定 doc_id 选取，校验来源、缺失/重复 ID、23 个不同用例；不依赖输入行顺序。
+- 新建带时间戳目录，不覆盖输入。输出 UPCF_evaluation_experiences_23.jsonl 与同名 xlsx。
+- JSONL 为扁平对象，包含 sequence、original_sequence、case_id、doc_id、title、完整 experience（原始 Diff 不改写）及其他必要来源字段，不带向量。
+- Excel 四列：新序号 1～23、用例编号、经验 title、经验 doc_id。
+- 离线验证通过：筛选、输入乱序、真实 ES 示例正文保留、JSONL/Excel 一致性、缺项/重复和既有目录保护。
+
+用户实际生成并提供的输入路径：
+```text
+D:\agent-memory\AgentMemory\exports\UPCF_20261022_114414_275069\evaluation_input_20261024_164907_030738\UPCF_evaluation_experiences_23.jsonl
+```
+
+### 8.6 experience-eval-generator 已实现范围
+
+实际位置为 **evaluation/experience-eval-generator/**（按用户要求，未放到 skills/）：
+- SKILL.md：逐条候选选择、迁移分析、故障注入、静态校验及隔离要求。
+- references/upcf-evaluation.md：唯一 JSON 配置块及业务规则。
+- scripts/prepare_evaluation.py：init 初始化，finalize 校验和发布结果，Python 3.9+ 标准库。
+- 三个文件已提交，初版完成提交为 8654dc59a1bc3c84dc8927b0e2f11dd569d0ed70；实际经验路径已于 450c63af5d2cc668e13262db8249c495fc5f5903 写入 reference。
+- 与 experience-engine 不同，本辅助脚本直接解析 reference 的 JSON 块，用户无需每次重复传路径。
+
+配置：repository_root=D:\UPCFTestcases；cases_root=D:\UPCFTestcases\Cases；output_root=D:\UPCF-evaluation-output；expected_count=23；candidate_scope=same_directory；experience_jsonl 为 8.5 中实际路径。
+
+用户旧目录 D:\UPCFTestcases-master\UPCFTestcases-master 报“not a git repository”，这是目录无 Git 仓库元数据，并非未安装 Git。之后用户回报 D:\UPCFTestcases 位于 master、工作区 clean、与本地 origin/master 一致；已建议 git pull --ff-only 并记录 HEAD。未收到实际提交号，不能仅凭 status 证明远端最新。
+
+约束：
+1. 只在 Cases 定位来源及候选，只选来源的直接同目录其他用例；源仓库只读。
+2. 按需只读 UserFiles/Logic 和 UserFiles/Config，读取相关层级 AGENTS.md；不改公共 AW 或配置。
+3. 不用当前经验来源脚本及其仅改名副本；批内母本不复用。并未禁止使用其他经验的来源用例，也未禁止候选彼此相似。
+4. 每条只注入一个目标错误机制，可有必要关联修改；保留母本业务数据及清理、备份、必要检查。
+5. 新文件名、类名、CaseID 一致。基线仅替换母本旧标识，故障脚本由基线修改；不能顺手整改业务。
+6. 所有生成材料写独立输出目录；无合适候选或证据不足则记录缺口，不强行凑数。
+7. 不执行远程用例、安装依赖或写入经验库；不编造实测日志。静态通过不等于故障复现或修复成功。
+8. 用户提供的 AGENTS 示例存在 CloudSpider: 语法错误及 procedure/Procedure 不一致，不能机械照抄。新增/修改步骤描述使用 logger.step()。
+
+init 记录提交号、工作区状态、输入和源码快照、23 条任务及同目录候选。Agent 写 staging 与 decisions.json，再 finalize 校验数量、路径、母本/标识、基线仅重命名、语法及必要结构，生成：
+- evaluation_cases/：故障脚本，保留 Cases 相对结构；
+- evaluator/baselines/、patches/：干净基线、注入/参考修复补丁；
+- evaluator/manifest.json、report.md、decisions.json、staging/：映射、依据及生成过程。
+
+基线只是注入前代码，未证明运行通过。后续独立会话只提供故障脚本和必要环境/真实日志，隔离 evaluator 和输入经验答案。参考逆向补丁不是唯一可接受修复。
+已通过 skill 格式检查及模拟仓库 init/finalize 验证，覆盖路径越界拒绝、补丁生成、源仓库保持不变、覆盖保护等；这些不代替内网语义验证。
+
+### 8.7 评测 skill 自动发布
+
+新增 .github/workflows/publish-experience-eval-generator.yml，提交 51732576356d62253681919c14dc9ef6dcf6d648。每次 develop push 都触发，无路径过滤；仅文档变化也发布。只打包 evaluation/experience-eval-generator，ZIP 名为 experience-eval-generator.zip，解压根目录为 experience-eval-generator/，安装到 .opencode/skills/。
+
+每次创建独立 prerelease，标签 experience-eval-generator-develop-<run_number>.<run_attempt>，保留历史、不标为正式 Latest，不改变原 experience-engine 发布流程。
+已核验成功：
+- [开发包 1.1](https://github.com/yf990848-droid/experience/releases/tag/experience-eval-generator-develop-1.1)，[运行 40081862480](https://github.com/yf990848-droid/experience/actions/runs/40081862480)。
+- [开发包 2.1](https://github.com/yf990848-droid/experience/releases/tag/experience-eval-generator-develop-2.1)，已配置实际 JSONL 路径，[运行 40082219795](https://github.com/yf990848-droid/experience/actions/runs/40082219795)。
+
+上述为已核验记录，不代表后续最新版本。
+
+### 8.8 首次内网生成结果与 SEQ 01 问题（2026-10-24～26）
+
+用户回传运行目录 D:\UPCF-evaluation-output\run_20261024_173348_123783，汇总为 **23 条尝试、18 条生成、5 条阻塞、运行验证 0**；用户报告 finalize 静态通过，18 对 inject/repair diff 已输出。助手未取得完整 decisions、manifest、生成源码和补丁，不能将汇总视为全部样本有效性验收。下表 SEQ 均为新序号。
+
+| SEQ | 用户报告的母本或状态 | 注入或阻塞说明 |
+| --- | --- | --- |
+| 01 | Network_SCP_N5_01_01 | 单引号 CHK；实际改变检查机制，见下文，不能直接计为有效 |
+| 02 | Nx_Nz_Function_31_12 | 等待 30→23；稳定性待运行 |
+| 03 | PCF_N23If_Msg_qosShortGuarantee_01_12 | NoEventsSubscription→EventsSubscription |
+| 04 | PCF_NCS_Rel_Subscribe_01_09 | 3 处加入 ucPreLinkIndex:0 |
+| 05 | Network_SCP_N24_Hpcf_01_01 | GET 去掉 value 参数 |
+| 06 | Network_SCP_Srv_04_01 | GET 去掉 value 参数 |
+| 07 | source_missing | 来源 I_14_COM_SOAP_CFG 未定位，涉及 SOAP/SCP |
+| 08 | Nx_NCS_AMFReSelect_05_02 | NoNFDiscover→NFDiscover；超时尚未实测 |
+| 09 | IfTrace_UPCFTrace_DYETRACE_02_01 | scenario value/label 改为 69/DIAM-IPv4-SCTP-OUT |
+| 10/11 | RxIf_RxFunc_VoWiFiIP_UsrLocEnhance_27_03/27_04 | 修改期望值 |
+| 12/15/16/19 | PCF_NCS_AISEnhanced_09_04、25_08、25_09、09_20 | 加入 ucPreLinkIndex:0 |
+| 13 | PCF_NCS_NFCache_ConDis_04_03 | Content 扩展含 ucPreLinkIndex 与 profileStatus |
+| 14 | PCF_NCS_Rel_Subscribe_01_16 | 3 处加入 ucPreLinkIndex:.* |
+| 17 | no_candidate | 用户报告候选 02_04 已使用 uri 而非 uriList，未找到合适干净基线；非独立核验 |
+| 18 | PCF_NCS_Rel_Subscribe_01_15 | 4 处加入 ucPreLinkIndex:.* |
+| 20 | no_candidate | 同目录 20 个候选无文件搜索 AW |
+| 21 | no_candidate | 同目录仅来源用例，无母本 |
+| 22 | PCF_N23If_Mng_Discovery_02_02 | NFPROFILE start 0000→53EFFF；转义匹配处理不证明语义成立 |
+| 23 | no_candidate | 11 个候选无所需 GetUserMsgTrace/Subscribe_U 流程 |
+
+**SEQ 01 已观察到的具体问题：**
+- 同目录未找到原生双引号 CHK 比较。Agent 仍选择 Network_SCP_N5_01_01，把 GET 3gpp-Sbi-Routing-Binding N5ChkrtBind1 改成单引号 CHK，并删除 ChkSameElement。
+- 这同时改变检查实现和引号；未证明两种检查语义等价、变量无后续用途，也未证明失败只由引号引起。自动参考逆向补丁会恢复 GET+ChkSameElement，而目标经验仅改单/双引号，存在验收偏差。
+- 已建议将此项标为 no_candidate、不发布 staging/01，继续其他 22 条；但用户最终汇总仍把 01 列为生成成功，尚未确认纠正。18 是报告的生成数量，不是认可的有效样本数。
+- Agent 误把候选 05/06 互相相似当成禁止理由；限制针对的是当前来源的改名副本，不是候选互相相似。
+- Bash 使用 D:\... 路径报错，后改 /d/... 成功。临时 _inject_t1.py 写到 D:\agent-memory\AgentMemory，偏离全部产物放输出目录的约定。
+- **待改进建议，尚未实现**：skill 应明确禁止为了适配经验先改造候选检查机制，找不到自然注入点及时结束该条；现有静态校验不能自动识别 GET→CHK 语义变化。
+
+### 8.9 专家提出的同类经验重复核查（2026-10-26）
+
+已重新读取原 30 条经验的 Diff，确认按来源脚本去重后仍有大量相同故障模式。下表用于防止新旧编号混淆：
+
+| 新 SEQ | 原序号 | 原始修复动作 |
+| --- | --- | --- |
+| 04 | 6 | 从 Content 删除 ucPreLinkIndex:0 |
+| 14 | 21 | 从 Content 删除 ucPreLinkIndex:0 |
+| 15 | 22 | 从 Content 删除 ucPreLinkIndex:0 |
+| 16 | 23 | 从 Content 删除 ucPreLinkIndex:0 |
+| 18 | 25 | 从 Content 删除 ucPreLinkIndex:0 |
+| 12 | 17 | 删除 ucPreLinkIndex，并把 peerId 拆成单独检查出现次数 |
+| 19 | 26 | 删除 ucPreLinkIndex，并把 peerId 拆成单独检查出现次数 |
+| 13 | 18 | 从 Content 删除 ucPreLinkIndex:0 |
+
+结论：
+- 04/14/15/16/18 属于同一核心修复机制，主要差别是来源、业务标识、状态和位置数量；15/16 尤其接近。生成时 14/18 改用正则 .* 不足以成为独立故障类型。
+- 12/19 包含额外 peerId 拆分，但原 Diff 同时改两项，不能据此证明两项分别都是独立故障原因。生成汇总只提到注入 ucPreLinkIndex，可能仅覆盖原经验的一部分；尚需读取 12/19 注入补丁确认。
+- 13 也属同一家族；生成汇总还增加 profileStatus，需核对是否额外引入目标之外的条件。
+- 按回传汇总，18 个生成样本中至少 8 个集中在该故障家族。23 个来源不代表 23 种错误；此前筛选仅按来源去重，未充分处理机制重复。
+- **建议而非已执行决定**：保留产物并按故障家族归类，分别报告按脚本和按故障类型成绩；指定 doc_id 命中与等价且适用经验召回分别统计。若要求精简，可保留一个删除字段代表，另选一个能实际体现 peerId 拆分的代表。尚未授权或执行重新筛选、删除样本、更新 skill/导出脚本或更改评分实现。
+- 后续运行验收需要干净基线通过、注入后目标位置失败、有效修复后恢复，同时保留必要业务检查。当前没有上述实测结果。
+
+
 ## 9. 后续跟踪
 
 1. 根据 7.4 已回报的游标位置持续检查新任务推进，取得最新汇总（created/updated/failed/has_more）及 pending/failed 数量，确认是否追平；抽查新经验的 `product.product_name`、原始 Diff 和修复点时间，确认旧任务不再运行。追平后沿用当前任务自动增量，跟踪积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
@@ -414,6 +538,8 @@ Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使
 
 6. 跟进 7.3 的旧经验缺失样本：核实 Step `1327580` 当前更新时间及新任务处理记录，区分范围过滤、尚未处理、处理失败和检索未召回；目前仅确认备份中的修复时间为 9 月 6 日，未授权恢复或扩大重跑范围。
 
+7. 跟进评测集 18 生成/5 阻塞结果：先核查 SEQ 01 检查机制改造，读取 12/19/13 注入补丁；补充禁止强行改造候选的 skill 约束需另行实施。按故障家族评估重复覆盖，确认评测统计规则，再进行内网运行验证。当前样本均未实测，详见 8.8～8.9。
+
 ## 10. 关键文档
 
 - [调测轨迹经验提取设计文档](./调测轨迹经验提取设计文档.md)
@@ -423,3 +549,9 @@ Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使
 - [experience-engine 使用说明](../skills/experience-engine/SKILL.md)
 - [测试脚本调测检索配置](../skills/experience-engine/references/experience-guide-testdebug.md)
 - [skill 开发包发布流水线](../.github/workflows/publish-experience-engine.yml)
+
+- [UPCF 原始 30 条经验](../evaluation/UPCF_experiences_filtered.md)
+- [23 条经验筛选导出脚本](../evaluation/prepare_upcf_evaluation.py)
+- [评测集生成 skill](../evaluation/experience-eval-generator/SKILL.md)
+- [评测集路径及规则配置](../evaluation/experience-eval-generator/references/upcf-evaluation.md)
+- [评测集生成 skill 发布流水线](../.github/workflows/publish-experience-eval-generator.yml)
