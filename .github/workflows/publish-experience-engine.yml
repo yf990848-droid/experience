@@ -25,6 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f skills/experience-engine/SKILL.md
+          test -s skills/experience-engine/scripts/coreinsight-cli.exe || { echo "缺少 coreinsight-cli.exe，请补入 scripts 后发布" >&2; exit 1; }
           mkdir -p dist
           git archive --format=zip --prefix=experience-engine/ \
             --output=dist/experience-engine.zip HEAD:skills/experience-engine
@@ -43,7 +44,8 @@ jobs:
           - 提交：${GITHUB_SHA}
           - 打包范围：skills/experience-engine
           - 下载文件：experience-engine.zip
-          - 解压后目录：experience-engine/，可放入项目的 .opencode/skills/ 下。
+          - 解压后目录：experience-engine/，可放入项目的 .cac/skills/ 下。
+          - 包含 scripts/coreinsight-cli.exe；首次使用前执行 auth login，后续复用登录会话。
           - 可在 references/experience-guide-testdebug.md 中配置产品名称；留空则不限制产品。
           EOF
 
@@ -59,3 +61,4 @@ jobs:
 
           [下载 experience-engine.zip](https://github.com/${GH_REPO}/releases/download/${release_tag}/experience-engine.zip)
           EOF
+

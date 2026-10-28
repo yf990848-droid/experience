@@ -323,79 +323,48 @@ GROUP BY process_status;
 
 ## 8. experience-engine skill
 
-### 8.1 已确认并实现的行为
+### 8.1 当前行为（2026-10-28 切换 CLI）
 
-skill 位于 `skills/experience-engine/`，供 Agent 在失败分析和修复过程中检索历史经验。已删除 skill 的存入能力及 `scripts/save_experience.py`，仅保留检索；服务端经验提取、新建、覆盖和删除流程仍按前述规则运行。
+skill 位于 `skills/experience-engine/`，仅用于检索。`scripts/search_experience.py` 已由直接 HTTP 请求改为调用同目录 `coreinsight-cli.exe`；后端和经验生成逻辑不变。
 
-| 文件 | 作用 |
-| --- | --- |
-| `skills/experience-engine/SKILL.md` | 通用调用协议、配置读取流程和输出要求 |
-| `skills/experience-engine/references/experience-guide-testdebug.md` | 测试脚本调测场景、可选产品名称、检索时机和关键词来源 |
-| `skills/experience-engine/scripts/search_experience.py` | 构造检索请求、自动获取调用人工号、打印结果 |
+- Agent 读取 reference 中的 `scene=测试脚本调测经验` 和可选 `product_name`，再调用脚本；脚本不解析 Markdown。
+- 第二个位置参数改为场景名称，不再传场景 ID 421；CLI 使用 `--scene`。
+- 固定 `--search_field rag_search_text --page 1 --page_size 5`。不传 top_k/score_threshold，不做本地二次过滤；用户已确认不保留原固定 0.3 阈值。
+- `--product-name` 非空时映射为 CLI `--products`，未传、空字符串或空白时省略；不限制产品版本。
+- 调用人工号取 CLI 登录工号，不再使用 getpass.getuser()。默认不传 user_id，检索各用户经验；Python 函数保留显式 user_id 过滤入口。
+- 使用脚本自身绝对路径定位 exe，参数列表启动子进程，UTF-8 解码。请求超时 120 秒，子进程上限 130 秒。
+- 保留三段输出，原始返回保留完整 CLI JSON-RPC stdout。成功需退出码 0、无 error、result.code=200 及有效 data.items；空数组成功。未登录提示登录，exe 缺失、超时、非 JSON 和业务失败返回非零退出码。
+- 检索时机、关键词来源及适用性判断仍按 reference 执行。
 
-配置与请求规则：
+### 8.2 安装、登录与发布
 
-- 场景配置为 `scene_id=421`；当前脚本的默认场景为空，实际调用必须从 reference 读取并传入场景，否则报错。
-- 产品使用名称 `product_name`，不使用产品 ID；reference 默认配置为 `""`，表示不限制产品。
-- 产品名称未配置、未传、为空字符串或仅含空格时，省略 CLI 的 `--product-name`；脚本也会归一化空值，并省略请求中的整个 `product` 字段。
-- 产品名称非空时，使用经验库中实际存储的完整名称，传入 `--product-name`；请求字段为 `product.product_name`。这不改变服务端入库时保存 `groupId/groupName` 的规则。
-- 本次需求最终确认为“产品可选”，未新增产品版本参数或配置。
-- 调用人工号通过 `getpass.getuser()` 自动获取并填入 `caller_id`，无需手工传参；获取失败或为空时报错。运行环境的用户名应为实际工号。
-- 默认不附加 `user_id`，检索同场景下各用户的经验；Python 函数保留显式 `user_id` 参数供兼容调用，CLI 不暴露该参数。
+发布包应包含 scripts/coreinsight-cli.exe，由用户补入；本次代码提交不包含二进制。自动发布仍使用 git archive，只打包已提交的文件，因此用户需将 exe 加入仓库对应目录并提交 develop。流水线增加非空 exe 检查，缺失时停止发布，不生成不完整包。
 
-脚本调用 `POST https://fuyao.rnd.huawei.com/memory/experience/doc/search`，使用 `search_field=rag_search_text`、`top_k=5`、`score_threshold=0.3`，请求超时 30 秒。脚本使用 Python 标准库，不需要安装服务端依赖。
+流水线 `.github/workflows/publish-experience-engine.yml` 每次 develop push 自动打包 `skills/experience-engine`，发布独立 prerelease，保留历史，不标为正式 Latest。ZIP 根目录为 experience-engine/，安装到项目 `.cac/skills/`。不得打包登录会话或凭据。
 
-reference 是 Agent 读取的业务配置，**脚本不会自动解析 Markdown reference**。Agent 读取后组装参数；手工运行脚本时，需要自行传入场景和可选产品名称。
+首次使用在 CMD 登录（PowerShell 需在引号路径前加 `&`）：
 
-测试脚本调测场景要求进入 Step 2 失败原因分析时先检索；Step 4 修复验证出现不同的新报错时重新检索。关键词来自核心 ERROR 日志、脚本文件名、相关类名/函数名/模块名。结合 Error Log、Root Cause 和 Pattern 判断适用性，采用 Diff 前核实当前版本。
-
-输出必须原样保留【经验检索输入】【经验检索返回】【原始返回 JSON】三段。返回 `code=200` 时退出码为 0，否则为 1；不得编造或改写召回结果。
-
-### 8.2 自动发布开发包
-
-流水线为 `.github/workflows/publish-experience-engine.yml`：
-
-- 每次 push 到 `develop` 都触发，无路径过滤；仅更新文档也会触发。
-- 对触发提交中的 `skills/experience-engine` 执行 `git archive`，产物为 `experience-engine.zip`，解压根目录为 `experience-engine/`。
-- 打包范围仅为该 skill 的已提交文件，不包含服务端代码。
-- 每次创建独立 GitHub prerelease，标签格式为 `experience-engine-develop-<run_number>.<run_attempt>`，保留历史版本，不标记为正式 Latest。
-- 从 [Releases](https://github.com/yf990848-droid/experience/releases) 下载所需版本的 ZIP；解压至项目 `.opencode/skills/`，得到 `.opencode/skills/experience-engine/SKILL.md`。
-
-本轮对话中已确认成功的发布为 [experience-engine-develop-2.1](https://github.com/yf990848-droid/experience/releases/tag/experience-engine-develop-2.1)，对应提交 `6343876f1c09cf85fe3b61221daa42fccaad23f0`，包含产品可选行为。此处是已验证版本记录，不代表后续最新版本。
-
-### 8.3 本地验证方法与状态
-
-在可访问上述内网接口的电脑上，以 Windows PowerShell 为例，从安装 skill 的项目根目录执行：
-
-```powershell
-python --version
-python -c "import getpass; print(getpass.getuser())"
-
-$experienceSearch = ".opencode\skills\experience-engine\scripts\search_experience.py"
-$experienceQuery = "替换成已入库经验中的实际错误关键词"
-
-# 不传产品
-python $experienceSearch $experienceQuery "421"
-$LASTEXITCODE
-
-# 空字符串，使用等号写法避免 PowerShell 丢弃空参数
-python $experienceSearch $experienceQuery "421" --product-name=
-$LASTEXITCODE
-
-# 纯空格
-python $experienceSearch $experienceQuery "421" --product-name "   "
-$LASTEXITCODE
-
-# 指定经验库中实际存储的产品名称
-python $experienceSearch $experienceQuery "421" --product-name "实际产品名称"
-$LASTEXITCODE
+```cmd
+".cac\skills\experience-engine\scripts\coreinsight-cli.exe" auth login --username <工号>
 ```
 
-检查自动获取的用户名是否为实际工号。前 3 种产品输入应显示“不限制产品”，第 4 种应显示指定名称。检查三段输出是否完整、原始 JSON 的 `code` 是否为 200、退出码是否为 0；指定产品时，结合原始返回数据或已知经验核对产品范围。`code=200` 且结果为空仅说明请求成功，召回效果需使用已知入库经验验证。
+用户交互输入密码；会话在用户目录自动复用，失效后重新登录。Skill 不自动登录、不收集密码。运行脚本需要 Windows 和 Python 3.9+，无需第三方 Python 依赖。
 
-Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使用 experience-engine，按测试脚本调测 reference 检索历史经验，关键词为实际错误关键词，展示实际调用命令和脚本三段输出，本次只验证检索”。检查其读取 reference、传入场景、未附加产品参数，并实际执行脚本。随后填写真实产品名称重试，检查命令是否追加 `--product-name`。
+### 8.3 验证记录与调用方式
 
-此前已完成模拟网络请求下的产品未传、空字符串、纯空格和指定名称验证，以及函数缺省/None 输入、场景缺失提示、原始结果保留、skill 格式和差异检查；开发包发布流水线已成功执行。**本次对话尚未收到用户本地验证结果，skill 的真实内网接口连通性及 Agent 端到端调用仍待验证**；前述服务端试运行记录不能替代这些验证。
+2026-10-28 用户在内网执行新版 CLI 并回传结果：
+- query="APN 添加失败"、scene="测试脚本调测经验"、search_field=rag_search_text、page=1/page_size=5；code=200，响应回显字段正确。未限制产品时候选 213、排序结果 10，第一页 5 条为 UDG APN 相关经验。
+- 加 --products UPCF 后 code=200，候选 37、排序结果 10，第一页 5 条 product_name 均为 UPCF；证明本次产品过滤有效。返回内容与 APN 关联较弱，不能直接用于修复，也不能断言无 APN 经验。
+- scene_id=null 是传场景名称时的正常响应。上述结果不能确定 CLI 实际阈值，用户已明确不要求保留旧阈值。
+
+新脚本调用示例（项目根目录）：
+
+```cmd
+python .cac\skills\experience-engine\scripts\search_experience.py "实际错误关键词" "测试脚本调测经验"
+python .cac\skills\experience-engine\scripts\search_experience.py "实际错误关键词" "测试脚本调测经验" --product-name "UPCF"
+```
+
+代码侧验证使用模拟 CLI 返回，覆盖参数传递、产品可选、JSON-RPC 解析、空结果、未登录及异常处理；用户回传的内网结果是直接 CLI 验证，不等同于修改后 Python 封装及 Agent 端到端实测。补入 exe 后需验证完整包的脚本调用和 Agent 按 reference 调用。
 
 ### 8.4 相关提交
 
@@ -593,3 +562,4 @@ init 记录提交号、工作区状态、输入和源码快照、23 条任务及
 - [factor_candidates.py](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/skills/coretest-design/scripts/factor_candidates.py)
 - [query.py](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/skills/test-graph/scripts/query.py)
 - [factor_archive.py](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/skills/coretest-archive/scripts/factor_archive.py)
+

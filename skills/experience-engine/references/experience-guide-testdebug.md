@@ -7,13 +7,12 @@
 
 | 配置项 | 内容 |
 |--------|------|
-| 场景名称 | 测试脚本调测经验 |
-| `scene_id` | `421` |
+| `scene`（场景名称） | `测试脚本调测经验` |
 | `product_name` | `""`（选填，留空则不限制产品） |
 
 产品名称未配置、为空字符串或仅含空格时，省略 `--product-name`，按场景检索各产品的经验。如需限制产品，在上表填写经验库中实际存储的完整产品名称，再将该值原样传给 `--product-name`；名称含空格时，用双引号包裹整个值。
 
-调用人工号由脚本使用 `getpass.getuser()` 自动获取，无需在本文件配置。
+调用人工号由 CLI 登录会话提供，无需在本文件配置；首次使用前按 SKILL.md 登录。
 
 ## 二、检索经验配置
 
@@ -30,13 +29,13 @@
 默认不限制产品：
 
 ```bash
-python .opencode/skills/experience-engine/scripts/search_experience.py "SET AFRATTYPECFG 错误码 100017 MML命令 N5RATPARA" "421"
+python .cac/skills/experience-engine/scripts/search_experience.py "SET AFRATTYPECFG 错误码 100017 MML命令 N5RATPARA" "测试脚本调测经验"
 ```
 
 如需限制产品，将 `<product_name>` 替换为上表中已填写的产品名称：
 
 ```bash
-python .opencode/skills/experience-engine/scripts/search_experience.py "SET AFRATTYPECFG 错误码 100017 MML命令 N5RATPARA" "421" --product-name "<product_name>"
+python .cac/skills/experience-engine/scripts/search_experience.py "SET AFRATTYPECFG 错误码 100017 MML命令 N5RATPARA" "测试脚本调测经验" --product-name "<product_name>"
 ```
 
 ## 四、注意事项
@@ -46,3 +45,4 @@ python .opencode/skills/experience-engine/scripts/search_experience.py "SET AFRA
 | 1 | 检索时优先关注 Pattern 字段，因为它直接提供 `[触发场景] -> [修复动作]` 的复用规则 |
 | 2 | 如果同一脚本有历史经验，优先级最高——说明同一脚本之前调试过 |
 | 3 | Diff 字段可以作为修复参考，但需验证是否适用于当前版本 |
+
