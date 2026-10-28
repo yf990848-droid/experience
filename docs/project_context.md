@@ -338,7 +338,7 @@ skill 位于 `skills/experience-engine/`，仅用于检索。`scripts/search_exp
 
 ### 8.2 安装、登录与发布
 
-发布包应包含 scripts/coreinsight-cli.exe，由用户补入；本次代码提交不包含二进制。自动发布仍使用 git archive，只打包已提交的文件，因此用户需将 exe 加入仓库对应目录并提交 develop。流水线增加非空 exe 检查，缺失时停止发布，不生成不完整包。
+GitHub 自动发布继续使用 git archive 打包已提交的 Skill 文本文件，不包含 coreinsight-cli.exe，也不检查 exe 是否存在。exe 不能上传外部仓库，由维护者下载开发包后在内网补入 scripts/coreinsight-cli.exe，再向最终用户分发完整包。最终用户无需单独准备 exe，只需首次登录；运行时仍检查同目录 exe，缺失则提示安装包不完整。
 
 流水线 `.github/workflows/publish-experience-engine.yml` 每次 develop push 自动打包 `skills/experience-engine`，发布独立 prerelease，保留历史，不标为正式 Latest。ZIP 根目录为 experience-engine/，安装到项目 `.cac/skills/`。不得打包登录会话或凭据。
 
