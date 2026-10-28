@@ -1,6 +1,6 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-26  
+更新时间：2026-10-28  
 GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
@@ -555,3 +555,41 @@ init 记录提交号、工作区状态、输入和源码快照、23 条任务及
 - [评测集生成 skill](../evaluation/experience-eval-generator/SKILL.md)
 - [评测集路径及规则配置](../evaluation/experience-eval-generator/references/upcf-evaluation.md)
 - [评测集生成 skill 发布流水线](../.github/workflows/publish-experience-eval-generator.yml)
+
+## 11. 跨项目参考：CoreTest Design 因子溯源（2026-10-28 补记）
+
+本节按用户指定记录在 experience 上下文中；结论来自本次对话读取的 `yf990848-droid/coretest-spec-e2e` 仓库 `develop` 源码，不属于 experience 服务的字段或实现。本轮未修改两个项目的业务代码。
+
+用户已运行若干 TS 的 design，希望提供选用因子的标识供他人溯源；尚未提供这些 TS 的实际产物，因此未核验具体因子值或平台关联结果。
+
+### 11.1 应查看的本地产物
+
+目录：`.design_output/<design_task_id>/TR_<tr_id>/test_design/`。
+
+| 文件 | 用途 |
+| --- | --- |
+| `ts_<NN>_factor_plan.json` | 最终选中的 TS 因子及每个 TP 的选用关系，溯源优先查看 |
+| `ts_<NN>_factor_candidates.json` | 检索证据；保存 `queries[]` 的 target、label、query、response，以及去重候选。包含未选中因子，不能当作最终选用清单 |
+
+### 11.2 标识字段映射
+
+| 类型 | 图谱业务主键 / candidates 字段 | plan 中 TS 级字段 | plan 中 TP 级字段 |
+| --- | --- | --- | --- |
+| 测试因子 `TestFactor` | `test_factor_id` / `test_factors[].test_factor_id` | `test_factors[].testFactorId`（UUID） | `tp_factors["TP.xx.xx"].test_factor_ids` |
+| 场景因子 `SceneFactor` | `factor_code` / `scene_factors[].factor_code` | `scene_factors[].factorCode`（示例结构还保留 `sceneFactorCode`） | `tp_factors["TP.xx.xx"].scene_factor_codes` |
+
+- 场景因子在 `query.py` 的 schema 定义为 `"SceneFactor": ("factor_code", ["factor_name", "factor_desc", "factor_data_type"])`。提供节点类型 `SceneFactor` 和编码值后，可按 `factor_code` 查询。
+- 测试因子可同时提供计划中的 `number`、`name`；场景因子可提供 `factorName`，方便人工核对。
+- 上述是业务主键，不是图数据库内部节点 ID。当前 design 流程没有显式提取内部节点 ID；平台关系数字 `id` 也不能当作测试因子 UUID。
+
+### 11.3 本地选用与平台关联的边界
+
+- Design 仅生成并校验本地因子计划，不写平台。只完成 design 时应称“设计选用因子”，不能声称平台已关联成功。
+- Archive 才执行真实关联。已归档时，查看 `archive/archive_state.json` 的 `factor` 条目状态及其 `response_file` 指向的响应证据；TS 因子条目的 key 为 `TS_<NN>/test/<UUID>` 或 `TS_<NN>/scene/<编码>`。
+- TP 创建通过 relations 携带因子，需结合 TP 归档状态和对应请求/响应核对。计划文件本身不能证明平台操作成功。
+
+源码依据（均为 coretest-spec-e2e 的 develop）：
+- [test-design-agent.md](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/agents/test-design-agent.md)
+- [factor_candidates.py](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/skills/coretest-design/scripts/factor_candidates.py)
+- [query.py](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/skills/test-graph/scripts/query.py)
+- [factor_archive.py](https://github.com/yf990848-droid/coretest-spec-e2e/blob/develop/.testagent/skills/coretest-archive/scripts/factor_archive.py)
