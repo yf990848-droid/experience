@@ -9,7 +9,7 @@ description: 通用经验检索工具，用于任务失败分析和修复过程�
 
 ## 1. 安装与首次登录
 
-GitHub 开发 ZIP 不包含 CLI，维护者在内网补入 `scripts/coreinsight-cli.exe` 后分发，不将 exe 上传外部仓库。最终用户使用的内网完整包包含 `scripts/search_experience.py` 和 `scripts/coreinsight-cli.exe`，适用于 Windows；运行脚本需要 Python 3.9+，无需安装第三方 Python 依赖。将 skill 安装到项目 `.cac/skills/experience-engine/`。
+安装包包含 `scripts/search_experience.py` 和 `scripts/coreinsight-cli.exe`，适用于 Windows；运行脚本需要 Python 3.9+，无需安装第三方 Python 依赖。将 skill 安装到项目 `.cac/skills/experience-engine/`。
 
 首次使用前，请用户在本地终端登录，替换 `<工号>`，按提示输入密码。
 
