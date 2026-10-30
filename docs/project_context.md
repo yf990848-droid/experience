@@ -1,7 +1,7 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-28  
-GitHub 维护分支：`develop`；GitHub 服务发布分支：`main`；skill 开发包随 `develop` 每次更新自动发布。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
+更新时间：2026-10-30  
+GitHub 主开发分支：`develop`（experience-engine CLI 版）；API 兼容分支：`develop-api`（本文所在分支，保留直接 API 检索）；GitHub 服务发布分支：`main`。experience-engine 开发包分别随 `develop`、`develop-api` 推送独立发布；不得将 CLI 分支改动视为已合入 API 分支。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
 
@@ -323,7 +323,7 @@ GROUP BY process_status;
 
 ## 8. experience-engine skill
 
-### 8.1 已确认并实现的行为
+### 8.1 已确认并实现的行为（develop-api / 直接 API 版）
 
 skill 位于 `skills/experience-engine/`，供 Agent 在失败分析和修复过程中检索历史经验。已删除 skill 的存入能力及 `scripts/save_experience.py`，仅保留检索；服务端经验提取、新建、覆盖和删除流程仍按前述规则运行。
 
@@ -337,11 +337,11 @@ skill 位于 `skills/experience-engine/`，供 Agent 在失败分析和修复过
 
 - 场景配置为 `scene_id=421`；当前脚本的默认场景为空，实际调用必须从 reference 读取并传入场景，否则报错。
 - 产品使用名称 `product_name`，不使用产品 ID；reference 默认配置为 `""`，表示不限制产品。
-- 产品名称未配置、未传、为空字符串或仅含空格时，省略 CLI 的 `--product-name`；脚本也会归一化空值，并省略请求中的整个 `product` 字段。
+- 产品名称未配置、未传、为空字符串或仅含空格时，省略 Python 脚本命令行的 `--product-name`；脚本也会归一化空值，并省略请求中的整个 `product` 字段。
 - 产品名称非空时，使用经验库中实际存储的完整名称，传入 `--product-name`；请求字段为 `product.product_name`。这不改变服务端入库时保存 `groupId/groupName` 的规则。
 - 本次需求最终确认为“产品可选”，未新增产品版本参数或配置。
 - 调用人工号通过 `getpass.getuser()` 自动获取并填入 `caller_id`，无需手工传参；获取失败或为空时报错。运行环境的用户名应为实际工号。
-- 默认不附加 `user_id`，检索同场景下各用户的经验；Python 函数保留显式 `user_id` 参数供兼容调用，CLI 不暴露该参数。
+- 默认不附加 `user_id`，检索同场景下各用户的经验；Python 函数保留显式 `user_id` 参数供兼容调用，Python 脚本命令行不暴露该参数。
 
 脚本调用 `POST https://fuyao.rnd.huawei.com/memory/experience/doc/search`，使用 `search_field=rag_search_text`、`top_k=5`、`score_threshold=0.3`，请求超时 30 秒。脚本使用 Python 标准库，不需要安装服务端依赖。
 
@@ -355,13 +355,13 @@ reference 是 Agent 读取的业务配置，**脚本不会自动解析 Markdown 
 
 流水线为 `.github/workflows/publish-experience-engine.yml`：
 
-- 每次 push 到 `develop` 都触发，无路径过滤；仅更新文档也会触发。
+- 本分支每次 push 到 `develop-api` 都触发，无路径过滤；仅更新文档也会触发。`develop` 的 CLI 版独立发布。
 - 对触发提交中的 `skills/experience-engine` 执行 `git archive`，产物为 `experience-engine.zip`，解压根目录为 `experience-engine/`。
 - 打包范围仅为该 skill 的已提交文件，不包含服务端代码。
-- 每次创建独立 GitHub prerelease，标签格式为 `experience-engine-develop-<run_number>.<run_attempt>`，保留历史版本，不标记为正式 Latest。
+- 每次创建独立 GitHub prerelease，本分支标签格式为 `experience-engine-develop-api-<run_number>.<run_attempt>`，保留历史版本，不标记为正式 Latest。
 - 从 [Releases](https://github.com/yf990848-droid/experience/releases) 下载所需版本的 ZIP；解压至项目 `.opencode/skills/`，得到 `.opencode/skills/experience-engine/SKILL.md`。
 
-本轮对话中已确认成功的发布为 [experience-engine-develop-2.1](https://github.com/yf990848-droid/experience/releases/tag/experience-engine-develop-2.1)，对应提交 `6343876f1c09cf85fe3b61221daa42fccaad23f0`，包含产品可选行为。此处是已验证版本记录，不代表后续最新版本。
+历史已确认成功的 develop API 版发布为 [experience-engine-develop-2.1](https://github.com/yf990848-droid/experience/releases/tag/experience-engine-develop-2.1)，对应提交 `6343876f1c09cf85fe3b61221daa42fccaad23f0`，包含产品可选行为。此处是已验证版本记录，不代表后续最新版本。
 
 ### 8.3 本地验证方法与状态
 
@@ -395,7 +395,7 @@ $LASTEXITCODE
 
 Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使用 experience-engine，按测试脚本调测 reference 检索历史经验，关键词为实际错误关键词，展示实际调用命令和脚本三段输出，本次只验证检索”。检查其读取 reference、传入场景、未附加产品参数，并实际执行脚本。随后填写真实产品名称重试，检查命令是否追加 `--product-name`。
 
-此前已完成模拟网络请求下的产品未传、空字符串、纯空格和指定名称验证，以及函数缺省/None 输入、场景缺失提示、原始结果保留、skill 格式和差异检查；开发包发布流水线已成功执行。**本次对话尚未收到用户本地验证结果，skill 的真实内网接口连通性及 Agent 端到端调用仍待验证**；前述服务端试运行记录不能替代这些验证。
+此前已完成模拟网络请求下的产品未传、空字符串、纯空格和指定名称验证，以及函数缺省/None 输入、场景缺失提示、原始结果保留、skill 格式和差异检查；开发包发布流水线已成功执行。**以上为直接 API 版的验证记录；本次新增的 CLI 实测及 Agent 回报见 8.10，不等于 develop-api 分支已完成真实接口和 Agent 端到端验收**。前述服务端试运行记录也不能替代这些验证。
 
 ### 8.4 相关提交
 
@@ -527,6 +527,60 @@ init 记录提交号、工作区状态、输入和源码快照、23 条任务及
 - 后续运行验收需要干净基线通过、注入后目标位置失败、有效修复后恢复，同时保留必要业务检查。当前没有上述实测结果。
 
 
+
+### 8.10 CLI 切换、实测及 API 分支保留（2026-10-30 汇总）
+
+本节记录本次对话的决定和结果。CLI 改动发生在 `develop`；本文所在 `develop-api` 保留切换前的实现，本次仅更新项目上下文。
+
+| 项目 | develop（CLI 版） | develop-api（直接 API 版） |
+| --- | --- | --- |
+| 调用方式 | Python 薄封装调用同目录 coreinsight-cli.exe | Python 标准库直接 POST 经验检索接口 |
+| 场景参数 | 场景名称“测试脚本调测经验” | 场景 ID“421” |
+| 调用身份 | CLI 登录会话，用户首次使用前登录 | getpass.getuser() 获取系统用户名作为 caller_id |
+| 产品过滤 | --product-name 映射为 CLI --products；空值省略 | 非空时传 product.product_name；空值省略整个 product |
+| 检索规则 | rag_search_text；第 1 页、每页 5 条；使用 CLI 默认阈值，不做本地过滤 | rag_search_text；top_k=5；score_threshold=0.3 |
+| 返回结构 | JSON-RPC result.data.items | data.items |
+| 发布标签 | experience-engine-develop-* | experience-engine-develop-api-* |
+
+**CLI 实现与分发决定：**
+
+- `9ad34c96fd4bf868dd75f02257e11671dcfbce91` 完成切换，修改检索脚本、SKILL.md、场景 reference、发布流水线及项目上下文。脚本按自身路径定位 exe，使用 subprocess 参数列表调用，处理缺失程序、未登录、超时、非 JSON、进程退出及业务错误；保留三段输出和完整原始 JSON。成功要求退出码为 0、无 JSON-RPC error 且 result.code=200；空结果也属于成功。
+- 用户明确不再保留原固定阈值；该决定仅适用于 CLI 版，API 分支仍保留 0.3。默认不传 caller_id、user_id，不把系统用户名当作 CLI 登录身份。
+- exe 由用户加入最终分发包，不能提交外部仓库。`21981e3e2561ebca5489dcb16581723090348941` 移除发布时的 exe 强制检查，仓库继续发布不含 exe 的 ZIP；运行时缺失提示保留。最终用户安装的完整包应包含 scripts/coreinsight-cli.exe。
+- `4750d51fcf94eebd65657e5454e71e8f2a24932e` 仅调整 SKILL.md：不提 GitHub、内网或分发渠道，默认 exe 已存在，用户首次登录即可。对应历史发布为 experience-engine-develop-22.1，不作为后续最新版本声明。
+- `981ebea9dac534960a80347d217c31f03082de6c` 在 develop 的 skills/experience-engine/ 下新增与 SKILL.md 同级的 README.md，简述 Skill，重点说明 CMD/PowerShell 登录、状态检查、会话失效和检索验证。该 README 不因本次文档同步而自动加入 develop-api。
+
+CLI 登录与本地调用示例（CMD，从项目根目录执行；API 版无需这些登录步骤）：
+
+```cmd
+".cac\skills\experience-engine\scripts\coreinsight-cli.exe" auth login --username <工号>
+".cac\skills\experience-engine\scripts\coreinsight-cli.exe" auth status
+python .cac\skills\experience-engine\scripts\search_experience.py "ucPreLinkIndex" "测试脚本调测经验"
+python .cac\skills\experience-engine\scripts\search_experience.py "ucPreLinkIndex" "测试脚本调测经验" --product-name "UPCF"
+echo %ERRORLEVEL%
+```
+
+密码由用户在终端按提示输入，不写入 Skill、配置或发布包。登录后复用会话，失效后重新登录。
+
+**实测证据与验收边界：**
+
+- 直接 CLI 检索“APN 添加失败”，指定场景名称和 rag_search_text，返回 code=200、无 error，前 5 条与 APN 重复添加相关。
+- 加入 --products "UPCF" 后，返回 5 条均为 UPCF / product_id=1058；候选数由未限制产品时的 213 降为 37。分页回显 total_ranked=10、total_pages=2。产品过滤已实测，但此次内容多为脚本加载、IP 配置等失败，与 APN 问题相关性较弱，不能直接作为修复依据。
+- CLI 默认排序数量与旧 top_k=5 含义不同；上述分数不能证明仍使用 0.3 阈值。用户已决定不再追究阈值一致性。
+- Python 封装的模拟验证覆盖同目录定位、中文及特殊字符、产品空值/非空映射、原始 JSON 保留、低分不过滤及异常处理；模拟测试不替代真实运行。
+- 用户回报 Agent 实际调用 Python 封装检索 ucPreLinkIndex，reference 产品为空，因此未传产品参数。报告为 8 条候选、8 条排序结果、返回 5 条，来源均为 UPCF。未限制产品而返回 UPCF 不能作为产品过滤验证。
+- Agent 回报将第二段改成摘要表、第三段改成文字说明，且多处截断，没有完整 stdout 和实际退出码。因此可认为调用流程基本跑通，尚不能认定三段原始输出完整验收通过。
+- 只有关键词，没有当前故障日志及脚本时，结论应限于“召回内容与关键词相关”；不得断言日志/根因完全一致、属于同一脚本或建议直接采用。涉及 total 未定义的经验也不能未经核查合并根因。
+- 用户决定先发布试用、收集反馈，不标为完整验收通过。反馈应包含实际命令、退出码、完整输出和预期结果；输出过长可保存完整 UTF-8 stdout 文件。
+
+**develop-api 创建及发布：**
+
+- 以 CLI 切换提交 `9ad34c96` 的父提交 `933894f4` 为起点创建 `develop-api`，保留直接 API 版本；不是从 CLI 版反向改写。
+- 分支初始配置提交 `d4f0d4835344ac452fc914a517148d158b6a79c6` 仅修改 `.github/workflows/publish-experience-engine.yml`，监听 develop-api，并使用独立发布标签，避免与 develop 冲突。
+- 首次发布 [experience-engine-develop-api-24.1](https://github.com/yf990848-droid/experience/releases/tag/experience-engine-develop-api-24.1) 已成功，附带 [experience-engine.zip](https://github.com/yf990848-droid/experience/releases/download/experience-engine-develop-api-24.1/experience-engine.zip)，本次已重新核实 Release 和附件存在。这是历史成功记录，不代表后续最新版本。
+- 本次请求仅更新 develop-api 的 docs/project_context.md；不修改检索代码、不合并 develop 或 main，不改评测 skill 发布流程。
+
+
 ## 9. 后续跟踪
 
 1. 根据 7.4 已回报的游标位置持续检查新任务推进，取得最新汇总（created/updated/failed/has_more）及 pending/failed 数量，确认是否追平；抽查新经验的 `product.product_name`、原始 Diff 和修复点时间，确认旧任务不再运行。追平后沿用当前任务自动增量，跟踪积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
@@ -534,7 +588,7 @@ init 记录提交号、工作区状态、输入和源码快照、23 条任务及
 3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
 4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
-5. 完成 experience-engine 的内网脚本验证和 Agent 端到端验证，记录实际返回及产品过滤结果。
+5. 分别跟踪 experience-engine 两个分支：CLI 版已完成直接 CLI 检索和产品过滤实测，先行试用并收集反馈，补齐 Python 封装完整 stdout、退出码和 Agent 输出核验；API 版独立记录真实接口及 Agent 验证，不能套用 CLI 版结果。分发 CLI 完整包时补入 exe，API 版无需 exe 或登录，详见 8.10。
 
 6. 跟进 7.3 的旧经验缺失样本：核实 Step `1327580` 当前更新时间及新任务处理记录，区分范围过滤、尚未处理、处理失败和检索未召回；目前仅确认备份中的修复时间为 9 月 6 日，未授权恢复或扩大重跑范围。
 
