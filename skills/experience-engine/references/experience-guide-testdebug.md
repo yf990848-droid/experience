@@ -9,9 +9,8 @@
 |--------|------|
 | 场景名称 | 测试脚本调测经验 |
 | `scene_id` | `421` |
-| `product_name` | `""`（选填，留空则不限制产品） |
 
-产品名称未配置、为空字符串或仅含空格时，省略 `--product-name`，按场景检索各产品的经验。如需限制产品，在上表填写经验库中实际存储的完整产品名称，再将该值原样传给 `--product-name`；名称含空格时，用双引号包裹整个值。
+产品名称由脚本从已有调测环境自动获取，无需在本文件配置。识别失败时会明确提示，并继续按场景不限产品检索。
 
 调用人工号由脚本使用 `getpass.getuser()` 自动获取，无需在本文件配置。
 
@@ -27,16 +26,10 @@
 
 ## 三、检索调用示例
 
-默认不限制产品：
+自动识别当前调测环境的产品：
 
 ```bash
 python .opencode/skills/experience-engine/scripts/search_experience.py "SET AFRATTYPECFG 错误码 100017 MML命令 N5RATPARA" "421"
-```
-
-如需限制产品，将 `<product_name>` 替换为上表中已填写的产品名称：
-
-```bash
-python .opencode/skills/experience-engine/scripts/search_experience.py "SET AFRATTYPECFG 错误码 100017 MML命令 N5RATPARA" "421" --product-name "<product_name>"
 ```
 
 ## 四、注意事项

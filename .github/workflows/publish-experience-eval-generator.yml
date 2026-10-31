@@ -1,0 +1,62 @@
+name: Publish experience-eval-generator skill
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout the triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build experience-eval-generator ZIP
+        run: |
+          set -euo pipefail
+          test -f evaluation/experience-eval-generator/SKILL.md
+          mkdir -p dist
+          git archive --format=zip --prefix=experience-eval-generator/ \
+            --output=dist/experience-eval-generator.zip HEAD:evaluation/experience-eval-generator
+          python3 -m zipfile -t dist/experience-eval-generator.zip
+
+      - name: Publish development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_tag="experience-eval-generator-develop-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          cat > dist/release-notes.md <<EOF
+          experience-eval-generator 开发版，来自 develop 分支。
+
+          - 提交：${GITHUB_SHA}
+          - 打包范围：evaluation/experience-eval-generator
+          - 下载文件：experience-eval-generator.zip
+          - 解压后目录：experience-eval-generator/，可放入项目的 .opencode/skills/ 下。
+          - 使用前在 references/upcf-evaluation.md 中填写实际的 experience_jsonl 路径，并核对仓库及输出路径。
+          - 本 skill 仅生成候选评测脚本与静态校验，不执行远程测试。
+          EOF
+
+          gh release create "$release_tag" dist/experience-eval-generator.zip \
+            --target "$GITHUB_SHA" \
+            --title "experience-eval-generator develop ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --notes-file dist/release-notes.md \
+            --prerelease \
+            --latest=false
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          已发布 [experience-eval-generator 开发版](https://github.com/${GH_REPO}/releases/tag/${release_tag})。
+
+          [下载 experience-eval-generator.zip](https://github.com/${GH_REPO}/releases/download/${release_tag}/experience-eval-generator.zip)
+          EOF

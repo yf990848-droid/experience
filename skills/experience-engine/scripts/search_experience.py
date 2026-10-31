@@ -7,23 +7,115 @@
 
 可选参数:
   scene_id        场景ID
-  --product-name  产品名称（从场景 reference 中读取，默认不限制产品）
+  --product-name  产品名称（兼容手动覆盖，默认从已有调测环境自动获取）
 
 调用人工号通过 getpass.getuser() 自动获取，默认检索同场景下各用户的经验。
 """
 
 import argparse
+import configparser
 import getpass
+from pathlib import Path
 import sys
 import json
+import urllib.parse
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ET
 
 BASE_URL = "https://fuyao.rnd.huawei.com"
 DEFAULT_SCENE_ID = ""
 SEARCH_FIELD = "rag_search_text"
 TOP_K = 5
 SCORE_THRESHOLD = 0.3
+ENV_BASE_URL = "https://coretestresult.cloudspider.rnd.huawei.com"
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def get_environment_name() -> str:
+    """复用当前项目已有环境配置，不创建新的配置文件。"""
+    markers = (".opencode", ".testagent", ".cac")
+    project_root = None
+    for directory in (SCRIPT_DIR, *SCRIPT_DIR.parents):
+        if directory.name in markers:
+            project_root = directory.parent
+            break
+        if (directory / ".idea" / "CoreTestPluginSettings.xml").is_file():
+            project_root = directory
+            break
+    if project_root is None:
+        for directory in (Path.cwd(), *Path.cwd().parents):
+            if any((directory / marker).is_dir() for marker in markers) or (
+                directory / ".idea" / "CoreTestPluginSettings.xml"
+            ).is_file():
+                project_root = directory
+                break
+
+    config_files = {SCRIPT_DIR / "config.ini"}
+    if project_root is not None:
+        # 原调测脚本的 config.ini 通常位于同项目其他 Skill 的 scripts 下。
+        for marker in markers:
+            config_files.update((project_root / marker / "skills").glob("*/scripts/config.ini"))
+    names = set()
+    for config_file in sorted(config_files):
+        if config_file.is_file():
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(config_file, encoding="utf-8-sig")
+            name = config.get("envInfo", "name", fallback="").strip()
+            if name:
+                names.add(name)
+    if len(names) > 1:
+        raise ValueError("已有调测配置包含多个不同环境名称，无法唯一确定产品")
+    if names:
+        return names.pop()
+    if project_root is not None:
+        xml_file = project_root / ".idea" / "CoreTestPluginSettings.xml"
+        if xml_file.is_file():
+            for element in ET.parse(xml_file).getroot().iter():
+                if element.tag.split("}")[-1] == "option" and element.get("name") == "defaultServerName":
+                    name = element.get("value", "").strip()
+                    if name:
+                        return name
+    raise ValueError("未找到已有调测环境名称")
+
+
+def get_environment_json(path: str, params=None) -> dict:
+    """只查询产品所需接口；不发送调用人或读取执行机凭据。"""
+    url = ENV_BASE_URL + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    with urllib.request.urlopen(url, timeout=10) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not isinstance(result, dict) or not result.get("success"):
+        raise ValueError("环境或群组接口查询失败")
+    return result
+
+
+def get_executor_info() -> dict:
+    """根据已有环境解析 groupName，不接收 userid、不发送 creator。"""
+    name = get_environment_name()
+    environment = get_environment_json(
+        "/openapi/v1/coretestide/environment/info", {"name": name}
+    )
+    executor = (environment.get("content") or {}).get("executor") or {}
+    group_id = executor.get("groupId")
+    if group_id is None or not str(group_id).strip():
+        raise ValueError("调测环境未返回 groupId")
+    groups = get_environment_json("/openapi/v1/group/getAllSystemGroupInfos")
+    for group in groups.get("content") or []:
+        if str(group.get("groupId")) == str(group_id):
+            group_name = (group.get("groupName") or "").strip()
+            if group_name:
+                return {"groupName": group_name}
+    raise ValueError("未找到 groupId 对应的产品名称")
+
+
+def get_product_name() -> str:
+    try:
+        return get_executor_info()["groupName"]
+    except Exception:
+        print("未能自动获取产品名称，本次检索未限制产品。", file=sys.stderr)
+        return ""
 
 
 def search_experience(query: str, scene_id: str = "", user_id: str = "", *,
@@ -127,15 +219,15 @@ def print_search_result(result: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="按场景检索历史经验，产品名称过滤可选，调用人工号自动获取")
+    parser = argparse.ArgumentParser(description="按场景检索历史经验，产品名称和调用人工号自动获取")
     parser.add_argument("query", help="检索关键词，空格分隔的关键词/短语")
     parser.add_argument("scene_id", nargs="?", default="", help="场景ID，从场景 reference 中读取")
-    parser.add_argument("--product-name", default="", help="产品名称，从场景 reference 中读取，默认不限制产品")
+    parser.add_argument("--product-name", default="", help="兼容手动覆盖产品名称，默认从已有调测环境自动获取")
     args = parser.parse_args()
 
     query = args.query
     effective_scene_id = (args.scene_id or DEFAULT_SCENE_ID).strip()
-    product_name = args.product_name.strip()
+    product_name = args.product_name.strip() or get_product_name()
 
     # 打印检索输入
     print_search_input(query, effective_scene_id, product_name)

@@ -1,9 +1,9 @@
-name: Publish experience-engine skill
+name: Publish experience-engine API skill
 
 on:
   push:
     branches:
-      - develop
+      - develop-api
 
 permissions:
   contents: write
@@ -30,16 +30,17 @@ jobs:
             --output=dist/experience-engine.zip HEAD:skills/experience-engine
           python3 -m zipfile -t dist/experience-engine.zip
 
-      - name: Publish development release
+      - name: Publish develop-apiment release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          release_tag="experience-engine-develop-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          release_tag="experience-engine-develop-api-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
           cat > dist/release-notes.md <<EOF
-          experience-engine 开发版，来自 develop 分支。
+          experience-engine 开发版，来自 develop-api 分支。
 
+          - API 版：直接调用经验接口，无需 coreinsight-cli.exe 或 CLI 登录。
           - 提交：${GITHUB_SHA}
           - 打包范围：skills/experience-engine
           - 下载文件：experience-engine.zip
@@ -49,7 +50,7 @@ jobs:
 
           gh release create "$release_tag" dist/experience-engine.zip \
             --target "$GITHUB_SHA" \
-            --title "experience-engine develop ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --title "experience-engine develop-api ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
             --notes-file dist/release-notes.md \
             --prerelease \
             --latest=false
