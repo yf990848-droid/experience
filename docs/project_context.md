@@ -1,7 +1,7 @@
 # 脚本调测轨迹经验提取项目上下文
 
 更新时间：2026-10-31  
-GitHub 主开发分支：`develop`（experience-engine CLI 版）；API 兼容分支：`develop-api`（本文所在分支，保留直接 API 检索）；GitHub 服务发布分支：`main`。experience-engine 开发包分别随 `develop`、`develop-api` 推送独立发布；不得将 CLI 分支改动视为已合入 API 分支。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
+GitHub 主开发分支：`develop`（experience-engine CLI 版）；API 兼容分支：`develop-api`（保留直接 API 检索）；GitHub 服务发布分支：`main`（本文所在分支）。experience-engine 开发包分别随 `develop`、`develop-api` 推送独立发布；不得将 CLI 分支改动视为已合入 API 分支。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
 
@@ -532,7 +532,7 @@ init 记录提交号、工作区状态、输入和源码快照、23 条任务及
 
 ### 8.10 CLI 切换、实测及 API 分支保留（2026-10-30 汇总）
 
-本节记录本次对话的决定和结果。CLI 改动发生在 `develop`；本文所在 `develop-api` 保留切换前的实现，本次仅更新项目上下文。
+本节记录本次对话的决定和结果。CLI 改动发生在 `develop`；`develop-api` 保留切换前的实现，本节记录当时在 API 分支的上下文更新。
 
 | 项目 | develop（CLI 版） | develop-api（直接 API 版） |
 | --- | --- | --- |
@@ -606,6 +606,62 @@ echo %ERRORLEVEL%
 - 2026-10-31 用户明确反馈“验证通过了”。本次产品免配置功能可记录为用户实测通过；没有提供具体环境、完整输出和异常分支记录，不补造测试明细。
 - 本轮仅更新本文，不合并到 develop/main，不修改其他业务代码；因流水线无路径过滤，本文提交也会触发新的 API 开发包发布。
 
+
+### 8.12 本地 experience-engine 迁入 CoreTestClaw 的 MR 准备（2026-10-31）
+
+目标：将本地完整 experience-engine Skill 通过 CodeHub MR 合入 `coretest-script-generate` 分支的 `skills/experience-engine/`，与 `skills/test-script-executor` 平级。本轮由用户在 Windows PowerShell 执行，以下完成状态依据用户回传输出；助手未直接访问本地磁盘或核验 CodeHub MR。
+
+**路径和远端：**
+
+| 项目 | 值 |
+| --- | --- |
+| 本地 Skill 来源 | `D:\experience-engine\.cac\skills\experience-engine` |
+| 原本地仓库 | `D:\CoreTestClaw` |
+| 原远端 origin（保留） | `https://codehub-dg-g.huawei.com/CloudTest-g/CoreTestClaw.git` |
+| 新增目标远端 innersource | `https://szv-open.codehub.huawei.com/innersource/CoreTestClaw_G/CoreTestClaw.git` |
+| MR 目标分支 | `coretest-script-generate` |
+| 个人分支 | `personal/c00959281/experience-engine-20261031` |
+| 独立 worktree | `D:\CoreTestClaw-experience-engine` |
+| 迁入目录 | `D:\CoreTestClaw-experience-engine\skills\experience-engine` |
+
+**已确认完成：**
+
+1. 原仓库位于 `master...origin/master`，有未提交的 `.gitignore` 修改及未跟踪的 `.testagent/`、`kernel.json`。采用独立 worktree，未要求清理、提交或覆盖这些内容。
+2. 对原 origin 执行 `git ls-remote --heads origin coretest-script-generate` 无输出；依据用户提供的 HTTPS 克隆地址添加 innersource，未替换 origin。
+3. `git fetch innersource coretest-script-generate` 成功，建立远端跟踪分支。
+4. 从 `innersource/coretest-script-generate` 创建上述个人分支和 worktree，起点为 `fe7f420`（提交说明“commit：新增获取groupName”）；创建后工作区干净，目标 Skill 目录不存在。
+5. 已复制并暂存以下 3 个文件；`git diff --cached --check` 无输出，`git status --short` 仅有这 3 个新增文件：
+
+| 仓库内路径 | 新增行数 | 删除行数 |
+| --- | ---: | ---: |
+| `skills/experience-engine/SKILL.md` | 53 | 0 |
+| `skills/experience-engine/references/experience-guide-testdebug.md` | 41 | 0 |
+| `skills/experience-engine/scripts/search_experience.py` | 248 | 0 |
+| 合计 | 342 | 0 |
+
+**MR 约束和结论：**
+
+- 用户说明：代码类 MR 每次新增行数不得超过 1000，其他种类不限。按整个 MR 相对目标分支的差异检查；在同一 MR 内拆多个 commit 不会降低 MR 总新增行数。
+- 本次 3 个文件合计 342 行，即使全部计入，也可使用一个代码类 MR，无需拆分。
+- 本地源目录仅包含上述 3 个文件；本轮未读取完整文件内容或与 GitHub API 版逐字比对，也未在迁入目录执行运行验证。8.11 的产品免配置验证是此前用户反馈，不能替代迁入后的集成验证。
+
+**已提供、尚未收到执行结果的后续步骤：**
+
+在 `D:\CoreTestClaw-experience-engine` 中执行：
+
+```powershell
+git commit -m "feat: 新增 experience-engine 经验检索 skill"
+git fetch innersource coretest-script-generate
+git rebase innersource/coretest-script-generate
+git diff --stat innersource/coretest-script-generate...HEAD
+git diff --check innersource/coretest-script-generate...HEAD
+git push -u innersource personal/c00959281/experience-engine-20261031
+```
+
+出现冲突或命令失败时先处理后再继续；推送前核对整个 MR 仍仅包含预期文件且新增行数符合限制。随后在 CodeHub 创建代码类 MR，源分支为上述个人分支，目标为 `coretest-script-generate`，建议标题“新增 experience-engine 经验检索 Skill”。
+
+**当前停在“复制、暂存及差异统计通过”。尚未收到 commit、rebase、push 的输出或 MR 链接，不能记录为已提交、已推送、已创建 MR 或已合入。** 下一轮先收集执行结果及 MR 状态，再继续指导。本次 GitHub 更新仅修改 main 的项目上下文，不代替 CodeHub 操作。
+
 ## 9. 后续跟踪
 
 1. 根据 7.4 已回报的游标位置持续检查新任务推进，取得最新汇总（created/updated/failed/has_more）及 pending/failed 数量，确认是否追平；抽查新经验的 `product.product_name`、原始 Diff 和修复点时间，确认旧任务不再运行。追平后沿用当前任务自动增量，跟踪积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
@@ -618,6 +674,8 @@ echo %ERRORLEVEL%
 6. 跟进 7.3 的旧经验缺失样本：核实 Step `1327580` 当前更新时间及新任务处理记录，区分范围过滤、尚未处理、处理失败和检索未召回；目前仅确认备份中的修复时间为 9 月 6 日，未授权恢复或扩大重跑范围。
 
 7. 跟进评测集 18 生成/5 阻塞结果：先核查 SEQ 01 检查机制改造，读取 12/19/13 注入补丁；补充禁止强行改造候选的 skill 约束需另行实施。按故障家族评估重复覆盖，确认评测统计规则，再进行内网运行验证。当前样本均未实测，详见 8.8～8.9。
+
+8. 跟进 CoreTestClaw Skill 迁入：已完成独立 worktree、个人分支和 3 个文件暂存（342 行）；收集提交、推送及 CodeHub MR 结果，确认合入目标为 `coretest-script-generate`，详见 8.12。
 
 ## 10. 关键文档
 
