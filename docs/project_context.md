@@ -1,6 +1,6 @@
 # 脚本调测轨迹经验提取项目上下文
 
-更新时间：2026-10-30  
+更新时间：2026-10-31  
 GitHub 主开发分支：`develop`（experience-engine CLI 版）；API 兼容分支：`develop-api`（本文所在分支，保留直接 API 检索）；GitHub 服务发布分支：`main`。experience-engine 开发包分别随 `develop`、`develop-api` 推送独立发布；不得将 CLI 分支改动视为已合入 API 分支。内网实际部署仓库为 CodeHub `CoreTool/CoreAI/Data/AgentMemory.git`，主分支为 `master`，与 GitHub 分支区分记录。
 
 ## 1. 背景与目标
@@ -330,22 +330,22 @@ skill 位于 `skills/experience-engine/`，供 Agent 在失败分析和修复过
 | 文件 | 作用 |
 | --- | --- |
 | `skills/experience-engine/SKILL.md` | 通用调用协议、配置读取流程和输出要求 |
-| `skills/experience-engine/references/experience-guide-testdebug.md` | 测试脚本调测场景、可选产品名称、检索时机和关键词来源 |
-| `skills/experience-engine/scripts/search_experience.py` | 构造检索请求、自动获取调用人工号、打印结果 |
+| `skills/experience-engine/references/experience-guide-testdebug.md` | 测试脚本调测场景、检索时机和关键词来源；不再配置产品名称 |
+| `skills/experience-engine/scripts/search_experience.py` | 从已有调测环境自动识别产品、构造检索请求、自动获取调用人工号、打印结果 |
 
 配置与请求规则：
 
 - 场景配置为 `scene_id=421`；当前脚本的默认场景为空，实际调用必须从 reference 读取并传入场景，否则报错。
-- 产品使用名称 `product_name`，不使用产品 ID；reference 默认配置为 `""`，表示不限制产品。
-- 产品名称未配置、未传、为空字符串或仅含空格时，省略 Python 脚本命令行的 `--product-name`；脚本也会归一化空值，并省略请求中的整个 `product` 字段。
-- 产品名称非空时，使用经验库中实际存储的完整名称，传入 `--product-name`；请求字段为 `product.product_name`。这不改变服务端入库时保存 `groupId/groupName` 的规则。
-- 本次需求最终确认为“产品可选”，未新增产品版本参数或配置。
+- 产品过滤仍使用名称 `product_name`，不使用产品 ID；自 `c934811` 起，正常命令行调用自动从已有调测环境获取名称，reference 不再配置产品。
+- 不传 `--product-name`、传空字符串或纯空格时，均尝试自动识别；识别成功将 `groupName` 填入请求的 `product.product_name`。
+- 保留非空 `--product-name` 作为兼容覆盖，显式传入时不再自动查询产品。底层 `search_experience(..., product_name="")` 函数保持原行为；自动获取在命令行入口完成。
+- 识别失败时明确提示“未能自动获取产品名称，本次检索未限制产品。”，省略整个 `product` 字段并继续检索；未新增产品版本参数。
 - 调用人工号通过 `getpass.getuser()` 自动获取并填入 `caller_id`，无需手工传参；获取失败或为空时报错。运行环境的用户名应为实际工号。
 - 默认不附加 `user_id`，检索同场景下各用户的经验；Python 函数保留显式 `user_id` 参数供兼容调用，Python 脚本命令行不暴露该参数。
 
 脚本调用 `POST https://fuyao.rnd.huawei.com/memory/experience/doc/search`，使用 `search_field=rag_search_text`、`top_k=5`、`score_threshold=0.3`，请求超时 30 秒。脚本使用 Python 标准库，不需要安装服务端依赖。
 
-reference 是 Agent 读取的业务配置，**脚本不会自动解析 Markdown reference**。Agent 读取后组装参数；手工运行脚本时，需要自行传入场景和可选产品名称。
+reference 是 Agent 读取的业务配置，**脚本不会自动解析 Markdown reference**。Agent 读取后组装参数；手工运行脚本时，需要自行传入场景；产品名称自动识别，详见 8.11。
 
 测试脚本调测场景要求进入 Step 2 失败原因分析时先检索；Step 4 修复验证出现不同的新报错时重新检索。关键词来自核心 ERROR 日志、脚本文件名、相关类名/函数名/模块名。结合 Error Log、Root Cause 和 Pattern 判断适用性，采用 Diff 前核实当前版本。
 
@@ -374,15 +374,15 @@ python -c "import getpass; print(getpass.getuser())"
 $experienceSearch = ".opencode\skills\experience-engine\scripts\search_experience.py"
 $experienceQuery = "替换成已入库经验中的实际错误关键词"
 
-# 不传产品
+# 不传产品，自动识别
 python $experienceSearch $experienceQuery "421"
 $LASTEXITCODE
 
-# 空字符串，使用等号写法避免 PowerShell 丢弃空参数
+# 空字符串仍自动识别，使用等号写法避免 PowerShell 丢弃空参数
 python $experienceSearch $experienceQuery "421" --product-name=
 $LASTEXITCODE
 
-# 纯空格
+# 纯空格仍自动识别
 python $experienceSearch $experienceQuery "421" --product-name "   "
 $LASTEXITCODE
 
@@ -391,13 +391,15 @@ python $experienceSearch $experienceQuery "421" --product-name "实际产品名�
 $LASTEXITCODE
 ```
 
-检查自动获取的用户名是否为实际工号。前 3 种产品输入应显示“不限制产品”，第 4 种应显示指定名称。检查三段输出是否完整、原始 JSON 的 `code` 是否为 200、退出码是否为 0；指定产品时，结合原始返回数据或已知经验核对产品范围。`code=200` 且结果为空仅说明请求成功，召回效果需使用已知入库经验验证。
+检查自动获取的用户名是否为实际工号。前 3 种产品输入应显示自动识别的产品名称；识别失败时提示并显示“不限制产品”。第 4 种应显示指定名称。检查三段输出是否完整、原始 JSON 的 `code` 是否为 200、退出码是否为 0；指定产品时，结合原始返回数据或已知经验核对产品范围。`code=200` 且结果为空仅说明请求成功，召回效果需使用已知入库经验验证。
 
-Agent 端到端验证：先将 reference 的产品名称留空，请 Agent“使用 experience-engine，按测试脚本调测 reference 检索历史经验，关键词为实际错误关键词，展示实际调用命令和脚本三段输出，本次只验证检索”。检查其读取 reference、传入场景、未附加产品参数，并实际执行脚本。随后填写真实产品名称重试，检查命令是否追加 `--product-name`。
+Agent 端到端验证：请 Agent“使用 experience-engine，按测试脚本调测 reference 检索历史经验，关键词为实际错误关键词，展示实际调用命令和脚本三段输出，本次只验证检索”。检查其读取 reference、传入场景、不要求配置产品，并实际执行脚本；核对输出中的产品名称。需要验证旧参数兼容时，可显式传入真实产品名称。
 
-此前已完成模拟网络请求下的产品未传、空字符串、纯空格和指定名称验证，以及函数缺省/None 输入、场景缺失提示、原始结果保留、skill 格式和差异检查；开发包发布流水线已成功执行。**以上为直接 API 版的验证记录；本次新增的 CLI 实测及 Agent 回报见 8.10，不等于 develop-api 分支已完成真实接口和 Agent 端到端验收**。前述服务端试运行记录也不能替代这些验证。
+此前已完成产品可选行为的模拟验证。产品免配置改动另已通过 XML/已有 INI 读取、配置冲突回退、groupId 类型匹配、不传 creator、请求字段一致性、识别失败和超时回退、显式产品覆盖等模拟验证；检索函数和结果打印函数的 AST 对比一致。**2026-10-31 用户反馈本次产品免配置改动“验证通过了”**，记录为用户实测通过；未提供本次完整命令、输出及逐项异常场景结果，不将其扩展为全部异常分支或 CLI 版验收。详见 8.11。
 
 ### 8.4 相关提交
+
+- `c934811eea4636130fa07ada96d71fe2cf96bfde`：develop-api 产品免配置；仅修改检索脚本、SKILL.md 和测试脚本调测 reference，2026-10-31 用户反馈验证通过。
 
 - `0b457b724086f0e72803ce2b9b601f62cc6fdb44`：skill 改为仅检索，按产品名称配置，自动获取调用人工号。
 - `87cd5181db7ad96c815da480bcca83cbf134d458`：增加 develop 自动发布 skill ZIP 的流水线。
@@ -537,7 +539,7 @@ init 记录提交号、工作区状态、输入和源码快照、23 条任务及
 | 调用方式 | Python 薄封装调用同目录 coreinsight-cli.exe | Python 标准库直接 POST 经验检索接口 |
 | 场景参数 | 场景名称“测试脚本调测经验” | 场景 ID“421” |
 | 调用身份 | CLI 登录会话，用户首次使用前登录 | getpass.getuser() 获取系统用户名作为 caller_id |
-| 产品过滤 | --product-name 映射为 CLI --products；空值省略 | 非空时传 product.product_name；空值省略整个 product |
+| 产品过滤 | --product-name 映射为 CLI --products；空值省略 | 默认自动识别 groupName；非空参数可覆盖；识别失败省略 product（见 8.11） |
 | 检索规则 | rag_search_text；第 1 页、每页 5 条；使用 CLI 默认阈值，不做本地过滤 | rag_search_text；top_k=5；score_threshold=0.3 |
 | 返回结构 | JSON-RPC result.data.items | data.items |
 | 发布标签 | experience-engine-develop-* | experience-engine-develop-api-* |
@@ -581,6 +583,29 @@ echo %ERRORLEVEL%
 - 本次请求仅更新 develop-api 的 docs/project_context.md；不修改检索代码、不合并 develop 或 main，不改评测 skill 发布流程。
 
 
+### 8.11 API 版产品免配置实现、发布与验证（2026-10-30～31）
+
+用户要求参考正确示例中的 `get_executor_info` 获取产品，不使用 userid 参数，替代 reference 手工产品配置；明确“除了产品，不要影响其他地方”。先前误发的示例未包含产品查询，已以补发脚本为准。
+
+**已实现：**
+
+1. 复用当前项目已有 Skill 的 `scripts/config.ini` 中 `[envInfo] name`；未配置时读取项目 `.idea/CoreTestPluginSettings.xml` 的 `defaultServerName`，不创建新配置文件。
+2. 支持 `.opencode`、`.testagent`、`.cac` 安装目录；查找脚本所在项目，必要时从当前工作目录向上定位。扫描已有配置时，多个非空环境名称不一致则判为识别失败，不任意选择。
+3. GET `https://coretestresult.cloudspider.rnd.huawei.com/openapi/v1/coretestide/environment/info`，仅传 `name`，不传 `creator`；`get_executor_info()` 无 userid 参数。
+4. 读取 `content.executor.groupId`，GET 同站点 `/openapi/v1/group/getAllSystemGroupInfos`，统一将 ID 转字符串匹配，取非空 `groupName`。
+5. 命令行入口将产品名称传入原检索函数，并在原【经验检索输入】中展示。识别失败时向 stderr 输出提示，继续不限产品检索；保留非空 `--product-name` 覆盖行为。
+
+环境/群组查询每次超时 10 秒，使用标准库 HTTP；未引入示例的 SSH、远程执行、加解密及结果上报逻辑，不输出执行机凭据。原经验检索接口、调用人身份、场景、关键词、`rag_search_text`、`top_k=5`、`score_threshold=0.3`、30 秒检索超时、结果解析和三段输出格式保持不变；服务端提取、写入、评测及发布流水线未修改。
+
+**提交和发布证据：**
+
+- 实现提交：[c934811](https://github.com/yf990848-droid/experience/commit/c934811eea4636130fa07ada96d71fe2cf96bfde)，仅修改 `skills/experience-engine/scripts/search_experience.py`、`skills/experience-engine/SKILL.md`、`skills/experience-engine/references/experience-guide-testdebug.md`。
+- 自动发布流水线 [40992817720](https://github.com/yf990848-droid/experience/actions/runs/40992817720) 已核验成功，对应上述提交。
+- 已发布 [experience-engine-develop-api-26.1](https://github.com/yf990848-droid/experience/releases/tag/experience-engine-develop-api-26.1)，附带 [experience-engine.zip](https://github.com/yf990848-droid/experience/releases/download/experience-engine-develop-api-26.1/experience-engine.zip)。这是本次功能的成功发布记录，不代表后续最新版本。
+- Release 说明仍有旧模板文字“在 reference 配置产品名称”；实际代码及 Skill 文档已改为自动获取。该模板位于发布流水线，本次上下文更新不修改它，后续需单独同步文案。
+- 2026-10-31 用户明确反馈“验证通过了”。本次产品免配置功能可记录为用户实测通过；没有提供具体环境、完整输出和异常分支记录，不补造测试明细。
+- 本轮仅更新本文，不合并到 develop/main，不修改其他业务代码；因流水线无路径过滤，本文提交也会触发新的 API 开发包发布。
+
 ## 9. 后续跟踪
 
 1. 根据 7.4 已回报的游标位置持续检查新任务推进，取得最新汇总（created/updated/failed/has_more）及 pending/failed 数量，确认是否追平；抽查新经验的 `product.product_name`、原始 Diff 和修复点时间，确认旧任务不再运行。追平后沿用当前任务自动增量，跟踪积压续跑和失败重试。定时任务运行期间不要并行手动补跑。
@@ -588,7 +613,7 @@ echo %ERRORLEVEL%
 3. 若 CodeCheck 再报版本级任务占用，待占用任务结束后重跑并查看真实检查结果。
 4. 接口将来提供可直接使用的 `product` 字段时，再核对类型与 ES Mapping 并补充 `metadata.product`。
 
-5. 分别跟踪 experience-engine 两个分支：CLI 版已完成直接 CLI 检索和产品过滤实测，先行试用并收集反馈，补齐 Python 封装完整 stdout、退出码和 Agent 输出核验；API 版独立记录真实接口及 Agent 验证，不能套用 CLI 版结果。分发 CLI 完整包时补入 exe，API 版无需 exe 或登录，详见 8.10。
+5. 分别跟踪 experience-engine 两个分支：CLI 版已完成直接 CLI 检索和产品过滤实测，先行试用并收集反馈，补齐 Python 封装完整 stdout、退出码和 Agent 输出核验；API 版产品免配置已于 2026-10-31 获用户反馈验证通过（见 8.11），与 CLI 版分别记录；后续问题保留命令、完整输出及退出码。分发 CLI 完整包时补入 exe，API 版无需 exe 或登录，详见 8.10。
 
 6. 跟进 7.3 的旧经验缺失样本：核实 Step `1327580` 当前更新时间及新任务处理记录，区分范围过滤、尚未处理、处理失败和检索未召回；目前仅确认备份中的修复时间为 9 月 6 日，未授权恢复或扩大重跑范围。
 
